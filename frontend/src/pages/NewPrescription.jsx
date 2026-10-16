@@ -17,6 +17,11 @@ import Badge from '../components/Badge'
 import Button from '../components/Button'
 import SectionCard from '../components/SectionCard'
 
+function getSpeechRecognition() {
+  const Impl = window.SpeechRecognition || window.webkitSpeechRecognition
+  return Impl ? new Impl() : null
+}
+
 export default function NewPrescription() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -30,7 +35,8 @@ export default function NewPrescription() {
     dosage: '',
     timings: timingSlots[0],
   })
-  const [recording, setRecording] = useState(false)
+  // null | 'transcript' | 'chat' — which field the microphone is filling.
+  const [listening, setListening] = useState(null)
   const [notice, setNotice] = useState('')
   const [casePaper, setCasePaper] = useState('')
   const [extracting, setExtracting] = useState(false)
@@ -40,7 +46,9 @@ export default function NewPrescription() {
   const [chatInput, setChatInput] = useState('')
   const [chatMessages, setChatMessages] = useState([])
   const [chatting, setChatting] = useState(false)
-  const recorderRef = useRef(null)
+
+  const recognitionRef = useRef(null)
+  const dictationBaseRef = useRef('')
 
   if (!patient) {
     return (
@@ -54,6 +62,69 @@ export default function NewPrescription() {
         </Link>
       </div>
     )
+  }
+
+  function stopDictation() {
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
+    setListening(null)
+  }
+
+  /**
+   * Dictate into the chat box or the consultation notes using the browser's
+   * own speech API — no backend call, so it costs no Gemini quota.
+   */
+  function startDictation(target) {
+    if (listening) {
+      stopDictation()
+      return
+    }
+
+    const recognition = getSpeechRecognition()
+    if (!recognition) {
+      setNotice('Voice input needs Chrome, Edge or Safari.')
+      return
+    }
+
+    setNotice('')
+    dictationBaseRef.current =
+      target === 'transcript' && transcript ? `${transcript} ` : ''
+
+    recognition.lang = 'en-IN'
+    recognition.interimResults = true
+    recognition.continuous = false
+
+    recognition.onresult = (event) => {
+      let finalText = ''
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const chunk = event.results[i][0].transcript
+        if (event.results[i].isFinal) finalText += chunk
+        else interim += chunk
+      }
+      const spoken = `${finalText}${interim}`.trim()
+      if (target === 'chat') {
+        setChatInput(spoken)
+      } else {
+        setTranscript(`${dictationBaseRef.current}${spoken}`)
+      }
+    }
+    recognition.onerror = (event) => {
+      setNotice(
+        event.error === 'not-allowed'
+          ? 'Microphone permission denied.'
+          : `Voice input error: ${event.error}`,
+      )
+      stopDictation()
+    }
+    recognition.onend = () => {
+      recognitionRef.current = null
+      setListening(null)
+    }
+
+    recognition.start()
+    recognitionRef.current = recognition
+    setListening(target)
   }
 
   function addItem() {
@@ -141,33 +212,8 @@ export default function NewPrescription() {
     }
   }
 
-  async function toggleRecording() {
-    if (recording) {
-      recorderRef.current?.stop()
-      return
-    }
-    setNotice('')
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream)
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop())
-        setRecording(false)
-        setTranscript(
-          (prev) =>
-            `${prev ? `${prev}\n` : ''}[Voice note captured — transcription available via the AI pipeline]`,
-        )
-      }
-      recorder.start()
-      recorderRef.current = recorder
-      setRecording(true)
-    } catch {
-      setNotice('Microphone unavailable — please type the transcript instead.')
-    }
-  }
-
   async function sendChat(event) {
-    event.preventDefault()
+    event?.preventDefault?.()
     const text = chatInput.trim()
     if (!text || chatting) return
 
@@ -301,6 +347,60 @@ export default function NewPrescription() {
         )}
       </SectionCard>
 
+      <SectionCard title="Ask the assistant">
+        {chatMessages.length > 0 && (
+          <ul className="mb-3 space-y-2">
+            {chatMessages.map((message, index) => (
+              <li
+                key={index}
+                className={`rounded-xl px-3.5 py-2.5 text-sm ${
+                  message.role === 'user'
+                    ? 'ml-8 bg-brand-50 text-brand-900'
+                    : message.error
+                      ? 'mr-8 bg-rose-50 text-rose-700'
+                      : 'mr-8 bg-slate-100 text-slate-700'
+                }`}
+              >
+                {message.text}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex gap-2">
+          <input
+            className="field"
+            placeholder='Say or type: "add Amoxicillin 500 mg TDS for 5 days"'
+            value={chatInput}
+            disabled={chatting}
+            onChange={(event) => setChatInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') sendChat(event)
+            }}
+          />
+          <Button
+            type="button"
+            variant={listening === 'chat' ? 'danger' : 'ghost'}
+            onClick={() => startDictation('chat')}
+            title="Dictate your instruction"
+          >
+            {listening === 'chat' ? <Square size={15} /> : <Mic size={15} />}
+          </Button>
+          <Button
+            type="button"
+            loading={chatting}
+            disabled={chatting || !chatInput.trim()}
+            onClick={sendChat}
+          >
+            <Send size={15} /> Send
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">
+          The assistant edits the medicine list above — add, change or remove by voice or
+          text. Uses the browser&apos;s microphone; the AI key must be configured.
+        </p>
+      </SectionCard>
+
       <SectionCard title="Medicines">
         <div className="grid gap-3 sm:grid-cols-[1.5fr_1fr_1.5fr_auto]">
           <select
@@ -369,77 +469,34 @@ export default function NewPrescription() {
         )}
       </SectionCard>
 
-      <SectionCard title="Ask the assistant">
-        {chatMessages.length > 0 && (
-          <ul className="mb-3 space-y-2">
-            {chatMessages.map((message, index) => (
-              <li
-                key={index}
-                className={`rounded-xl px-3.5 py-2.5 text-sm ${
-                  message.role === 'user'
-                    ? 'ml-8 bg-brand-50 text-brand-900'
-                    : message.error
-                      ? 'mr-8 bg-rose-50 text-rose-700'
-                      : 'mr-8 bg-slate-100 text-slate-700'
-                }`}
-              >
-                {message.text}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div className="flex gap-2">
-          <input
-            className="field"
-            placeholder='e.g. "add Amoxicillin 500 mg TDS for 5 days"'
-            value={chatInput}
-            disabled={chatting}
-            onChange={(event) => setChatInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') sendChat(event)
-            }}
-          />
-          <Button
-            type="button"
-            loading={chatting}
-            disabled={chatting || !chatInput.trim()}
-            onClick={sendChat}
-          >
-            <Send size={15} /> Send
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-slate-400">
-          The assistant edits the medicine list above. It needs the AI key to be configured.
-        </p>
-      </SectionCard>
-
       <SectionCard title="Consultation transcript">
         <textarea
           rows={5}
           className="field resize-none"
-          placeholder="Type or record the consultation notes…"
+          placeholder="Type or dictate the consultation notes…"
           value={transcript}
           onChange={(event) => setTranscript(event.target.value)}
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Button
             type="button"
-            variant={recording ? 'danger' : 'ghost'}
+            variant={listening === 'transcript' ? 'danger' : 'ghost'}
             size="sm"
-            onClick={toggleRecording}
+            onClick={() => startDictation('transcript')}
           >
-            {recording ? (
+            {listening === 'transcript' ? (
               <>
-                <Square size={14} /> Stop recording
+                <Square size={14} /> Stop dictation
               </>
             ) : (
               <>
-                <Mic size={15} /> Record voice
+                <Mic size={15} /> Dictate notes
               </>
             )}
           </Button>
-          {recording && <span className="text-xs font-medium text-rose-600">Recording…</span>}
+          {listening === 'transcript' && (
+            <span className="text-xs font-medium text-rose-600">Listening…</span>
+          )}
           {notice && <span className="text-xs text-slate-500">{notice}</span>}
         </div>
       </SectionCard>
