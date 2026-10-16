@@ -3,7 +3,8 @@
  *
  * The read helpers below still resolve bundled demo data (shapes match
  * `backend/app/models.py`, so swapping them for `fetch` later needs no
- * component changes). `extractPrescription` and `createPrescription` are live.
+ * component changes). The `extractPrescription`, `chatWithDraft` and
+ * `createPrescription` calls are live.
  */
 import { doctor, medicines, diseases, patients, prescriptions, timingSlots } from '../data/mock'
 
@@ -42,6 +43,20 @@ export async function extractPrescription(file) {
   form.append('file', file)
 
   const response = await fetch(`${BASE}/ai/extract`, { method: 'POST', body: form })
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
+/**
+ * Ask the prescribing assistant to change the draft.
+ * Returns { draft, reply, actions } — `draft` is the updated prescription.
+ */
+export async function chatWithDraft({ draft, message, history = [] }) {
+  const response = await fetch(`${BASE}/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ draft, message, history }),
+  })
   if (!response.ok) throw await readError(response)
   return response.json()
 }

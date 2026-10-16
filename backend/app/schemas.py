@@ -42,3 +42,33 @@ class PrescriptionOut(BaseModel):
     medicines: list[MedicineOut] = Field(default_factory=list)
     # Non-blocking patient-safety notes (e.g. recorded-allergy conflicts).
     warnings: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Chat-driven drafting
+# --------------------------------------------------------------------------- #
+class DraftState(BaseModel):
+    """The in-progress prescription the doctor and the assistant co-edit."""
+
+    transcript: str | None = None
+    diagnosis: str | None = None
+    lab_test: str | None = None
+    medicines: list[MedicineLine] = Field(default_factory=list)
+
+
+class ChatTurn(BaseModel):
+    role: str  # "user" | "assistant"
+    text: str
+
+
+class ChatRequest(BaseModel):
+    draft: DraftState = Field(default_factory=DraftState)
+    message: str
+    history: list[ChatTurn] = Field(default_factory=list)
+
+
+class ChatResponse(BaseModel):
+    draft: DraftState
+    reply: str
+    # Human-readable summary of what the assistant changed, e.g. "Added Amoxicillin".
+    actions: list[str] = Field(default_factory=list)

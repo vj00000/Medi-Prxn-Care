@@ -1,11 +1,13 @@
-"""AI endpoints."""
+"""AI endpoints: image extraction and chat-driven drafting."""
 
 import json
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
+from app.ai.chat import chat_with_draft
 from app.ai.client import AINotConfigured
 from app.ai.extract import extract_prescription_from_image
+from app.schemas import ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -35,3 +37,16 @@ async def extract_prescription(file: UploadFile = File(...)):
         raise HTTPException(status_code=502, detail="AI returned malformed output")
 
     return {"draft": draft.model_dump()}
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(payload: ChatRequest):
+    """Talk to the prescribing assistant; returns the updated draft."""
+    try:
+        draft, reply, actions = await chat_with_draft(
+            payload.draft, payload.message, payload.history
+        )
+    except AINotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    return ChatResponse(draft=draft, reply=reply, actions=actions)
