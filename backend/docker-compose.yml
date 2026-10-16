@@ -28,7 +28,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://smartrx:smartrx@db:5432/smartrx
       # Read from backend/.env (compose auto-loads it); empty if unset.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
     ports:
       - "8000:8000"
     volumes:

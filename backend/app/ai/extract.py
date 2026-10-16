@@ -7,7 +7,7 @@ draft for human confirmation.
 
 import json
 
-from app.ai.client import get_model
+from app.ai.client import AIBadResponse, get_model
 from app.ai.schemas import ExtractedMedicine, PrescriptionDraft
 
 EXTRACTION_PROMPT = """
@@ -44,6 +44,16 @@ Rules:
 """.strip()
 
 
+def _response_text(response) -> str:
+    """`response.text` raises when the model returned no text part."""
+    try:
+        return (response.text or "").strip()
+    except ValueError as exc:
+        raise AIBadResponse(
+            "The model returned no readable text (the image may have been blocked)."
+        ) from exc
+
+
 async def extract_prescription_from_image(
     image_bytes: bytes, mime_type: str
 ) -> PrescriptionDraft:
@@ -58,7 +68,14 @@ async def extract_prescription_from_image(
         },
     )
 
-    payload = json.loads(response.text)
+    raw = _response_text(response)
+    if not raw:
+        raise AIBadResponse("The model returned an empty response.")
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise AIBadResponse(f"The model returned unparseable JSON: {raw[:200]}") from exc
 
     return PrescriptionDraft(
         patient_name=payload.get("patient_name"),

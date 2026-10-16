@@ -8,11 +8,23 @@ import os
 
 import google.generativeai as genai
 
-DEFAULT_MODEL = "gemini-1.5-flash"
+# Model names rotate; override with GEMINI_MODEL if your key serves another.
+# List what your key can use:
+#   docker compose exec api python -c \
+#     "import google.generativeai as g; g.configure(api_key=__import__('os').getenv('GEMINI_API_KEY')); print([m.name for m in g.list_models()])"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
-class AINotConfigured(RuntimeError):
-    """Raised when GEMINI_API_KEY is absent, so callers can return HTTP 503."""
+class AIError(RuntimeError):
+    """Base class for AI-pipeline failures."""
+
+
+class AINotConfigured(AIError):
+    """GEMINI_API_KEY is absent -> the API answers 503."""
+
+
+class AIBadResponse(AIError):
+    """The model replied with something we could not parse -> 502."""
 
 
 def get_model():
@@ -23,4 +35,4 @@ def get_model():
         )
 
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel(os.getenv("GEMINI_MODEL", DEFAULT_MODEL))
+    return genai.GenerativeModel(os.getenv("GEMINI_MODEL") or DEFAULT_MODEL)

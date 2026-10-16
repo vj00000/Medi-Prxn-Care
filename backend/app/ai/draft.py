@@ -2,17 +2,35 @@
 
 Deliberately free of any Gemini import so the logic can be exercised directly
 (see the tools test) without an API key.
+
+Every argument here arrives from a language model, so it is treated as
+untrusted: bad types are coerced or dropped rather than allowed to raise.
 """
 
 from app.schemas import DraftState, MedicineLine
 
 
+def _clean_days(value) -> int | None:
+    """Coerce the model's duration into an int; drop anything non-numeric."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def _join_timings(
-    frequency: str | None, timing: str | None, duration_days: int | None
+    frequency: str | None, timing: str | None, duration_days
 ) -> str | None:
     parts = [part for part in (frequency, timing) if part]
     if duration_days:
-        parts.append(f"{duration_days} days")
+        days = _clean_days(duration_days)
+        if days is None:
+            # Keep the doctor's wording ("as needed") even though it isn't a count.
+            parts.append(str(duration_days))
+        else:
+            parts.append("1 day" if days == 1 else f"{days} days")
     return " · ".join(parts) or None
 
 
@@ -32,7 +50,7 @@ def add_medicine(
     dosage: str | None = None,
     frequency: str | None = None,
     timing: str | None = None,
-    duration_days: int | None = None,
+    duration_days=None,
     **_ignored,
 ) -> str:
     if not name:
@@ -56,7 +74,7 @@ def add_medicine(
             dosage=dosage,
             timings=_join_timings(frequency, timing, duration_days),
             timing_slot=timing,
-            duration_days=duration_days,
+            duration_days=_clean_days(duration_days),
         )
     )
     return f"Added {name.strip()}"
@@ -68,7 +86,7 @@ def update_medicine(
     dosage: str | None = None,
     frequency: str | None = None,
     timing: str | None = None,
-    duration_days: int | None = None,
+    duration_days=None,
     **_ignored,
 ) -> str:
     target = _find(draft, name)
@@ -89,7 +107,7 @@ def update_medicine(
     if timing:
         target.timing_slot = timing
     if duration_days:
-        target.duration_days = duration_days
+        target.duration_days = _clean_days(duration_days)
     return f"Updated {target.name}"
 
 
@@ -135,5 +153,5 @@ def apply_tool(draft: DraftState, name: str, args: dict | None) -> str:
     clean = {key: value for key, value in (args or {}).items() if value is not None}
     try:
         return handler(draft, **clean)
-    except TypeError as exc:  # defensive: a stray argument should not 500
+    except Exception as exc:  # noqa: BLE001 — model-supplied args are untrusted
         return f"Could not run {name}: {exc}"
