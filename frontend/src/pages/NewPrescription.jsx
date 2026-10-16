@@ -437,55 +437,7 @@ export default function NewPrescription() {
         </p>
       </SectionCard>
 
-      <SectionCard title="Vitals & advice">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-500">
-              Blood pressure
-            </span>
-            <input
-              className="field"
-              placeholder="e.g. 130/85 mmHg"
-              value={vitals.bp}
-              onChange={(event) =>
-                setVitals((current) => ({ ...current, bp: event.target.value }))
-              }
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-500">SpO₂</span>
-            <input
-              className="field"
-              placeholder="e.g. 98%"
-              value={vitals.spo2}
-              onChange={(event) =>
-                setVitals((current) => ({ ...current, spo2: event.target.value }))
-              }
-            />
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-slate-500">
-              General advice
-            </span>
-            <textarea
-              rows={3}
-              className="field resize-none"
-              placeholder="e.g. low salt diet, 30 min walk daily, review in 2 weeks"
-              value={vitals.advice}
-              onChange={(event) =>
-                setVitals((current) => ({ ...current, advice: event.target.value }))
-              }
-            />
-          </label>
-        </div>
-        <p className="mt-3 text-xs text-slate-400">
-          Read from the case paper on upload — diet, exercise, follow-up or anything else
-          written there. Carried into the consultation note; the database has no dedicated
-          column for it yet.
-        </p>
-      </SectionCard>
-
-      <SectionCard title="Medicines">
+      <SectionCard title="Medicines & advice">
         <div className="grid gap-3 sm:grid-cols-[1.5fr_1fr_1.5fr_auto]">
           <select
             className="field"
@@ -551,6 +503,54 @@ export default function NewPrescription() {
             ))}
           </ul>
         )}
+
+        {/* Vitals and advice belong with the medicines, not in a card of
+            their own. Kept compact: two narrow inputs, one textarea. */}
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <div className="flex flex-wrap gap-3">
+            <label className="block w-32">
+              <span className="mb-1 block text-xs font-medium text-slate-500">BP</span>
+              <input
+                className="field"
+                placeholder="130/85"
+                value={vitals.bp}
+                onChange={(event) =>
+                  setVitals((current) => ({ ...current, bp: event.target.value }))
+                }
+              />
+            </label>
+            <label className="block w-24">
+              <span className="mb-1 block text-xs font-medium text-slate-500">SpO₂</span>
+              <input
+                className="field"
+                placeholder="98%"
+                value={vitals.spo2}
+                onChange={(event) =>
+                  setVitals((current) => ({ ...current, spo2: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">
+              General advice
+            </span>
+            <textarea
+              rows={3}
+              className="field resize-none"
+              placeholder="e.g. low salt diet, 30 min walk daily, review in 2 weeks"
+              value={vitals.advice}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, advice: event.target.value }))
+              }
+            />
+          </label>
+          <p className="mt-2 text-xs text-slate-400">
+            BP, SpO₂ and advice are read from the case paper on upload. Carried into the
+            consultation note; the database has no dedicated column for them yet.
+          </p>
+        </div>
       </SectionCard>
 
       <SectionCard title="Consultation transcript">
