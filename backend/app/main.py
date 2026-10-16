@@ -1,19 +1,33 @@
-"""FastAPI application entry point (skeleton).
-
-Only health/database smoke endpoints are defined for now; the business routers
-(patients, prescriptions, lab tests, etc.) are the next milestone.
-"""
+"""FastAPI application entry point."""
 
 from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routers import ai as ai_router
 
 app = FastAPI(
     title="Smart Clinical Prescription & Patient Safety Ecosystem",
     version="0.1.0",
 )
+
+# The Vite dev servers run on 5173/5174; allow them to call this API directly.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(ai_router.router)
 
 
 @app.get("/", tags=["health"])

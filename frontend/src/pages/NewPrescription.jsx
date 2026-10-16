@@ -1,7 +1,17 @@
 import { useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, ImagePlus, Mic, Plus, Square, Trash2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ImagePlus,
+  Loader2,
+  Mic,
+  Plus,
+  Square,
+  Trash2,
+} from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { extractPrescription } from '../lib/api'
 import Badge from '../components/Badge'
 import Button from '../components/Button'
 import SectionCard from '../components/SectionCard'
@@ -22,6 +32,8 @@ export default function NewPrescription() {
   const [recording, setRecording] = useState(false)
   const [notice, setNotice] = useState('')
   const [casePaper, setCasePaper] = useState('')
+  const [extracting, setExtracting] = useState(false)
+  const [extractNote, setExtractNote] = useState('')
   const [error, setError] = useState('')
   const recorderRef = useRef(null)
 
@@ -52,6 +64,50 @@ export default function NewPrescription() {
       },
     ])
     setDraft((current) => ({ ...current, dosage: '' }))
+  }
+
+  async function handleCasePaper(event) {
+    const file = event.target.files?.[0]
+    event.target.value = '' // allow re-selecting the same file
+    if (!file) return
+
+    setCasePaper(file.name)
+    setExtractNote('')
+    setExtracting(true)
+
+    try {
+      const { draft: extracted } = await extractPrescription(file)
+      const added = (extracted?.medicines ?? []).map((medicine) => {
+        const name = (medicine.name ?? '').trim()
+        const known = medicines.find((m) => m.name.toLowerCase() === name.toLowerCase())
+        const timings = [medicine.frequency, medicine.timing, medicine.duration]
+          .filter(Boolean)
+          .join(' · ')
+        return {
+          medicine_id: known?.id ?? null,
+          name: known?.name ?? (name || 'Unrecognised'),
+          dosage: medicine.dosage ?? '—',
+          timings: timings || '—',
+        }
+      })
+
+      if (added.length > 0) {
+        setItems((prev) => [...prev, ...added])
+        setExtractNote(
+          `Extracted ${added.length} medicine${added.length > 1 ? 's' : ''} — please review before submitting.`,
+        )
+      } else {
+        setExtractNote('No medicines could be read from that image.')
+      }
+
+      if (extracted?.diagnosis) {
+        setTranscript((prev) => prev || `Diagnosis: ${extracted.diagnosis}`)
+      }
+    } catch (err) {
+      setExtractNote(`Extraction failed: ${err.message}`)
+    } finally {
+      setExtracting(false)
+    }
   }
 
   async function toggleRecording() {
@@ -129,6 +185,50 @@ export default function NewPrescription() {
         )}
       </div>
 
+      <SectionCard title="Case paper">
+        <label
+          className={`flex cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 text-sm transition-colors ${
+            extracting
+              ? 'border-brand-300 bg-brand-50/50 text-brand-700'
+              : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-brand-300 hover:bg-brand-50/40'
+          }`}
+        >
+          {extracting ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : (
+            <ImagePlus size={18} />
+          )}
+          <span>
+            {extracting
+              ? 'Reading the prescription…'
+              : 'Upload or capture the case paper (image)'}
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            disabled={extracting}
+            onChange={handleCasePaper}
+          />
+        </label>
+
+        {casePaper && !extractNote && (
+          <p className="mt-2 text-xs text-slate-500">Attached: {casePaper}</p>
+        )}
+        {extractNote && (
+          <p
+            className={`mt-2 text-xs ${
+              extractNote.startsWith('Extraction failed')
+                ? 'text-rose-600'
+                : 'text-slate-600'
+            }`}
+          >
+            {extractNote}
+          </p>
+        )}
+      </SectionCard>
+
       <SectionCard title="Consultation transcript">
         <textarea
           rows={5}
@@ -204,7 +304,7 @@ export default function NewPrescription() {
           <ul className="mt-4 divide-y divide-slate-100">
             {items.map((item, index) => (
               <li
-                key={`${item.medicine_id}-${index}`}
+                key={`${item.medicine_id ?? item.name}-${index}`}
                 className="flex items-center justify-between py-2.5"
               >
                 <div>
@@ -225,21 +325,6 @@ export default function NewPrescription() {
             ))}
           </ul>
         )}
-      </SectionCard>
-
-      <SectionCard title="Case paper">
-        <label className="flex cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 transition-colors hover:border-brand-300 hover:bg-brand-50/40">
-          <ImagePlus size={18} />
-          <span>Upload or capture the case paper (image)</span>
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(event) => setCasePaper(event.target.files?.[0]?.name ?? '')}
-          />
-        </label>
-        {casePaper && <p className="mt-2 text-xs text-slate-500">Attached: {casePaper}</p>}
       </SectionCard>
 
       {error && <p className="text-sm text-rose-600">{error}</p>}

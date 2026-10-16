@@ -1,9 +1,9 @@
 /**
  * Single integration seam with the FastAPI backend.
  *
- * Today every function resolves the bundled demo data. When the backend
- * routers land, replace each body with a `fetch(`${BASE}${path}`)` call —
- * the shapes already match `backend/app/models.py`, so no component changes.
+ * The read helpers below still resolve bundled demo data (shapes match
+ * `backend/app/models.py`, so swapping them for `fetch` later needs no
+ * component changes). `extractPrescription` is a live call today.
  */
 import { doctor, medicines, diseases, patients, prescriptions, timingSlots } from '../data/mock'
 
@@ -17,7 +17,30 @@ export const api = {
   listDiseases: () => diseases,
   listTimingSlots: () => timingSlots,
   listPrescriptions: () => prescriptions,
-  // `post` helpers will become POST calls once the API exists.
-  // eslint-disable-next-line no-unused-vars
   baseUrl: BASE,
+}
+
+/**
+ * Upload a case-paper / prescription image; the backend asks Gemini to read
+ * it and returns a structured draft:
+ *   { draft: { patient_name, diagnosis, lab_tests, medicines: [...] } }
+ * Throws an Error carrying the API's `detail` message on failure (e.g. 503
+ * when GEMINI_API_KEY is not configured).
+ */
+export async function extractPrescription(file) {
+  const form = new FormData()
+  form.append('file', file)
+
+  const response = await fetch(`${BASE}/ai/extract`, { method: 'POST', body: form })
+  if (!response.ok) {
+    let detail = `Request failed (${response.status})`
+    try {
+      const body = await response.json()
+      if (body?.detail) detail = body.detail
+    } catch {
+      // response was not JSON — keep the generic message
+    }
+    throw new Error(detail)
+  }
+  return response.json()
 }
