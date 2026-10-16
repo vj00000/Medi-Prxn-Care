@@ -438,6 +438,35 @@ export default function NewPrescription() {
       </SectionCard>
 
       <SectionCard title="Medicines & advice">
+        {/* Vitals first, on one line, so they read as the header of the
+            prescription rather than as a form of their own. */}
+        <div className="flex flex-wrap items-center gap-5">
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">BP</span>
+            <input
+              className="field w-28"
+              placeholder="130/85"
+              value={vitals.bp}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, bp: event.target.value }))
+              }
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">SpO₂</span>
+            <input
+              className="field w-24"
+              placeholder="98%"
+              value={vitals.spo2}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, spo2: event.target.value }))
+              }
+            />
+          </label>
+        </div>
+
+        <div className="my-4 border-t border-slate-100" />
+
         <div className="grid gap-3 sm:grid-cols-[1.5fr_1fr_1.5fr_auto]">
           <select
             className="field"
@@ -504,35 +533,8 @@ export default function NewPrescription() {
           </ul>
         )}
 
-        {/* Vitals and advice belong with the medicines, not in a card of
-            their own. Kept compact: two narrow inputs, one textarea. */}
         <div className="mt-5 border-t border-slate-100 pt-4">
-          <div className="flex flex-wrap gap-3">
-            <label className="block w-32">
-              <span className="mb-1 block text-xs font-medium text-slate-500">BP</span>
-              <input
-                className="field"
-                placeholder="130/85"
-                value={vitals.bp}
-                onChange={(event) =>
-                  setVitals((current) => ({ ...current, bp: event.target.value }))
-                }
-              />
-            </label>
-            <label className="block w-24">
-              <span className="mb-1 block text-xs font-medium text-slate-500">SpO₂</span>
-              <input
-                className="field"
-                placeholder="98%"
-                value={vitals.spo2}
-                onChange={(event) =>
-                  setVitals((current) => ({ ...current, spo2: event.target.value }))
-                }
-              />
-            </label>
-          </div>
-
-          <label className="mt-3 block">
+          <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-500">
               General advice
             </span>
