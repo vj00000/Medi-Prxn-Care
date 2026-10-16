@@ -20,6 +20,10 @@ Return STRICT JSON with exactly this shape:
   "patient_age": string|null,
   "diagnosis": string|null,
   "lab_tests": [string],
+  "bp": string|null,
+  "spo2": string|null,
+  "diet": string|null,
+  "exercise": string|null,
   "medicines": [
     {
       "name": string,
@@ -35,13 +39,40 @@ Return STRICT JSON with exactly this shape:
 }
 
 Rules:
-- NEVER invent a medicine, dosage or duration. If a field is unreadable, use null.
-- "frequency" = how often (once daily / twice daily / TDS).
+- NEVER invent a medicine, dosage, reading or advice. If something is not
+  written on the paper, use null. Missing values are expected and fine.
+- "bp" = the blood pressure reading exactly as written, e.g. "130/85 mmHg".
+- "spo2" = oxygen saturation, e.g. "98%".
+- "diet" = dietary advice written on the paper, e.g. "low salt, avoid sugar".
+- "exercise" = activity advice written on the paper, e.g. "30 min walk daily".
+- "frequency" = how often a medicine is taken (once daily / twice daily / TDS).
 - "timing" = when to take it (morning / night / after meals).
 - "duration" = how long (e.g. "5 days").
 - "confidence" is a number between 0 and 1 for the overall extraction quality.
 - Return JSON only, with no commentary.
 """.strip()
+
+
+def parse_draft(payload: dict) -> PrescriptionDraft:
+    """Build a PrescriptionDraft from the model's parsed JSON payload.
+
+    Split out from the network call so it can be tested without an API key.
+    """
+    return PrescriptionDraft(
+        patient_name=payload.get("patient_name"),
+        patient_age=payload.get("patient_age"),
+        diagnosis=payload.get("diagnosis"),
+        lab_tests=payload.get("lab_tests") or [],
+        bp=payload.get("bp"),
+        spo2=payload.get("spo2"),
+        diet=payload.get("diet"),
+        exercise=payload.get("exercise"),
+        medicines=[
+            ExtractedMedicine(**item) for item in payload.get("medicines") or []
+        ],
+        notes=payload.get("notes"),
+        confidence=payload.get("confidence"),
+    )
 
 
 def _response_text(response) -> str:
@@ -77,14 +108,4 @@ async def extract_prescription_from_image(
     except json.JSONDecodeError as exc:
         raise AIBadResponse(f"The model returned unparseable JSON: {raw[:200]}") from exc
 
-    return PrescriptionDraft(
-        patient_name=payload.get("patient_name"),
-        patient_age=payload.get("patient_age"),
-        diagnosis=payload.get("diagnosis"),
-        lab_tests=payload.get("lab_tests") or [],
-        medicines=[
-            ExtractedMedicine(**item) for item in payload.get("medicines") or []
-        ],
-        notes=payload.get("notes"),
-        confidence=payload.get("confidence"),
-    )
+    return parse_draft(payload)

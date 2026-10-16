@@ -22,5 +22,14 @@ class PrescriptionDraft(BaseModel):
     diagnosis: str | None = None
     lab_tests: list[str] = Field(default_factory=list)
     medicines: list[ExtractedMedicine] = Field(default_factory=list)
+
+    # Observations recorded on the case paper.
+    bp: str | None = None
+    spo2: str | None = None
+
+    # Lifestyle advice written on the case paper.
+    diet: str | None = None
+    exercise: str | None = None
+
     notes: str | None = None
     confidence: float | None = None

@@ -17,6 +17,8 @@ import Badge from '../components/Badge'
 import Button from '../components/Button'
 import SectionCard from '../components/SectionCard'
 
+const EMPTY_VITALS = { bp: '', spo2: '', diet: '', exercise: '' }
+
 function getSpeechRecognition() {
   const Impl = window.SpeechRecognition || window.webkitSpeechRecognition
   return Impl ? new Impl() : null
@@ -30,6 +32,7 @@ export default function NewPrescription() {
 
   const [transcript, setTranscript] = useState('')
   const [items, setItems] = useState([])
+  const [vitals, setVitals] = useState(EMPTY_VITALS)
   const [draft, setDraft] = useState({
     medicine_id: String(medicines[0]?.id ?? ''),
     dosage: '',
@@ -202,6 +205,15 @@ export default function NewPrescription() {
         setExtractNote('No medicines could be read from that image.')
       }
 
+      // Observations and lifestyle advice often sit in the margins of a case
+      // paper, not in the medicine list — pull them across too.
+      setVitals({
+        bp: extracted?.bp ?? '',
+        spo2: extracted?.spo2 ?? '',
+        diet: extracted?.diet ?? '',
+        exercise: extracted?.exercise ?? '',
+      })
+
       if (extracted?.diagnosis) {
         setTranscript((prev) => prev || `Diagnosis: ${extracted.diagnosis}`)
       }
@@ -249,10 +261,25 @@ export default function NewPrescription() {
     setError('')
     setSubmitting(true)
     try {
+      const observations = [vitals.bp && `BP ${vitals.bp}`, vitals.spo2 && `SpO2 ${vitals.spo2}`]
+        .filter(Boolean)
+        .join(', ')
+      const advice = [vitals.diet && `Diet: ${vitals.diet}`, vitals.exercise && `Exercise: ${vitals.exercise}`]
+        .filter(Boolean)
+        .join(' | ')
+
       await addPrescription({
         patient_id: patient.patient_id,
         doctor_id: doctor.doctor_id,
-        transcript: transcript.trim(),
+        // No DB column for vitals/lifestyle yet, so they ride along in the
+        // consultation note until the schema has a home for them.
+        transcript: [
+          transcript.trim(),
+          observations && `Vitals — ${observations}`,
+          advice,
+        ]
+          .filter(Boolean)
+          .join('\n'),
         case_paper_url: null,
         lab_test: null,
         medicines: items.map((item) => ({
@@ -345,6 +372,61 @@ export default function NewPrescription() {
             {extractNote}
           </p>
         )}
+      </SectionCard>
+
+      <SectionCard title="Vitals & advice">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">
+              Blood pressure
+            </span>
+            <input
+              className="field"
+              placeholder="e.g. 130/85 mmHg"
+              value={vitals.bp}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, bp: event.target.value }))
+              }
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">SpO₂</span>
+            <input
+              className="field"
+              placeholder="e.g. 98%"
+              value={vitals.spo2}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, spo2: event.target.value }))
+              }
+            />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="mb-1 block text-xs font-medium text-slate-500">Diet</span>
+            <input
+              className="field"
+              placeholder="e.g. low salt, avoid refined sugar"
+              value={vitals.diet}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, diet: event.target.value }))
+              }
+            />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="mb-1 block text-xs font-medium text-slate-500">Exercise</span>
+            <input
+              className="field"
+              placeholder="e.g. 30 min brisk walk daily"
+              value={vitals.exercise}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, exercise: event.target.value }))
+              }
+            />
+          </label>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">
+          Read from the case paper on upload. These are carried into the consultation note —
+          the database has no dedicated column for them yet.
+        </p>
       </SectionCard>
 
       <SectionCard title="Ask the assistant">
