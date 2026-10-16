@@ -55,3 +55,41 @@ export function buildTimeline(patient, prescriptions) {
 
   return events
 }
+
+/**
+ * Slot label -> clock hour.
+ *
+ * `MedicationSchedule.timing_slot` is a label ("Morning"), not a time, so a
+ * reminder needs this mapping to know when to ring.
+ *
+ * "As needed" is deliberately absent: an SOS medicine must never ring. An
+ * unmapped slot is treated the same way — silence rather than a wrong alarm.
+ */
+export const SLOT_TIMES = {
+  morning: 8,
+  afternoon: 14,
+  evening: 18,
+  night: 21,
+}
+
+/** The clock hour for a slot label, or undefined if it should never ring. */
+export function slotHour(timingSlot) {
+  return SLOT_TIMES[String(timingSlot ?? '').trim().toLowerCase()]
+}
+
+/**
+ * Doses whose slot time has arrived today and that are not already marked as
+ * taken.
+ *
+ * There is no upper window on purpose: a missed morning dose stays due until
+ * it is acknowledged rather than silently expiring at noon, which is also what
+ * makes the alarm demonstrable at any hour.
+ */
+export function dueDoses(schedules = [], taken = {}, now = new Date()) {
+  const hour = now.getHours()
+  return schedules.filter((item) => {
+    if (item.is_expired || taken[item.id]) return false
+    const slot = slotHour(item.timing_slot)
+    return slot !== undefined && hour >= slot
+  })
+}

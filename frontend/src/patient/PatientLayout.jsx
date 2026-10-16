@@ -2,6 +2,8 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { ClipboardList, HeartPulse, History, User } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { CURRENT_PATIENT_ID } from './patientData'
+import { DoseProvider } from './doseContext'
+import DoseAlarm from './components/DoseAlarm'
 
 const TABS = [
   { to: '/patient', label: 'Home', icon: HeartPulse, end: true },
@@ -15,6 +17,14 @@ function initials(name) {
 }
 
 export default function PatientLayout() {
+  return (
+    <DoseProvider>
+      <PatientShell />
+    </DoseProvider>
+  )
+}
+
+function PatientShell() {
   const { patients } = useApp()
   const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
 
@@ -62,6 +72,8 @@ export default function PatientLayout() {
           ))}
         </div>
       </nav>
+
+      <DoseAlarm />
     </div>
   )
 }

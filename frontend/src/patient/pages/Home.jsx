@@ -1,7 +1,7 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AlertTriangle, CalendarDays, ChevronRight, ClipboardList, User } from 'lucide-react'
+import { AlarmClock, AlertTriangle, CalendarDays, ChevronRight, ClipboardList, User } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
+import { useDoses } from '../doseContext'
 import SectionCard from '../../components/SectionCard'
 import Badge from '../../components/Badge'
 import { CURRENT_PATIENT_ID } from '../patientData'
@@ -9,7 +9,7 @@ import { CURRENT_PATIENT_ID } from '../patientData'
 export default function Home() {
   const { patients } = useApp()
   const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
-  const [taken, setTaken] = useState({})
+  const { taken, markTaken, untake, ringNow } = useDoses()
 
   if (!patient) return null
 
@@ -78,7 +78,7 @@ export default function Home() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setTaken((prev) => ({ ...prev, [item.id]: !prev[item.id] }))}
+                  onClick={() => (taken[item.id] ? untake(item.id) : markTaken(item.id))}
                   className={`shrink-0 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
                     taken[item.id]
                       ? 'bg-emerald-600 text-white'
@@ -90,6 +90,16 @@ export default function Home() {
               </li>
             ))}
           </ul>
+        )}
+
+        {total > 0 && (
+          <button
+            type="button"
+            onClick={ringNow}
+            className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 px-3 py-2 text-xs font-medium text-slate-500 transition-colors hover:border-brand-300 hover:text-brand-700"
+          >
+            <AlarmClock size={14} /> Ring an alarm now
+          </button>
         )}
       </SectionCard>
 
@@ -114,7 +124,7 @@ export default function Home() {
           <li>
             <Link to="/patient/profile" className="flex items-center justify-between py-3">
               <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-800">
-                <User size={16} className="text-slate-400" /> Health profile & QR
+                <User size={16} className="text-slate-400" /> Health profile &amp; QR
               </span>
               <ChevronRight size={16} className="text-slate-300" />
             </Link>
