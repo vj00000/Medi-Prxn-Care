@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routers import ai as ai_router
+from app.routers import catalog as catalog_router
+from app.routers import patients as patients_router
 from app.routers import prescriptions as prescriptions_router
 
 app = FastAPI(
@@ -14,21 +16,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# The Vite dev servers run on 5173/5174; allow them to call this API directly.
+# Vite takes the next free port when 5173/5174 are occupied, so allow any
+# localhost port rather than pinning a list that goes stale.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(ai_router.router)
+app.include_router(catalog_router.router)
+app.include_router(patients_router.router)
 app.include_router(prescriptions_router.router)
 
 

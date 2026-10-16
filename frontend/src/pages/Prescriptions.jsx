@@ -14,6 +14,7 @@ const FILTERS = [
 export default function Prescriptions() {
   const { prescriptions, getPatient, approvePrescription, warnings, clearWarnings } = useApp()
   const [filter, setFilter] = useState('all')
+  const [error, setError] = useState('')
 
   const list = useMemo(
     () => (filter === 'all' ? prescriptions : prescriptions.filter((rx) => rx.status === filter)),
@@ -41,6 +42,12 @@ export default function Prescriptions() {
           >
             <X size={16} />
           </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          {error}
         </div>
       )}
 
@@ -111,7 +118,14 @@ export default function Prescriptions() {
                   <div className="mt-4 flex justify-end">
                     <Button
                       size="sm"
-                      onClick={() => approvePrescription(rx.prescription_id)}
+                      onClick={async () => {
+                        try {
+                          await approvePrescription(rx.prescription_id)
+                          setError('')
+                        } catch (err) {
+                          setError(`Could not approve the prescription: ${err.message}`)
+                        }
+                      }}
                     >
                       <Check size={15} /> Approve
                     </Button>

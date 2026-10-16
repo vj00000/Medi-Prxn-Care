@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -27,7 +27,7 @@ function getSpeechRecognition() {
 export default function NewPrescription() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getPatient, medicines, timingSlots, addPrescription, doctor } = useApp()
+  const { getPatient, medicines, timingSlots, addPrescription, doctor, loading } = useApp()
   const patient = getPatient(id)
 
   const [transcript, setTranscript] = useState('')
@@ -52,6 +52,22 @@ export default function NewPrescription() {
 
   const recognitionRef = useRef(null)
   const dictationBaseRef = useRef('')
+
+  // `medicines` is fetched from the API after the first render, so the select
+  // starts empty and has to be seeded once the catalog arrives.
+  useEffect(() => {
+    if (!draft.medicine_id && medicines.length > 0) {
+      setDraft((current) => ({ ...current, medicine_id: String(medicines[0].id) }))
+    }
+  }, [medicines, draft.medicine_id])
+
+  if (loading) {
+    return (
+      <div className="card p-10 text-center">
+        <p className="text-sm text-slate-500">Loading patient…</p>
+      </div>
+    )
+  }
 
   if (!patient) {
     return (

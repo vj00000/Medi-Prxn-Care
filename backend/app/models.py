@@ -61,6 +61,7 @@ class Patient(Base):
     gender: Mapped[Optional[str]] = mapped_column(String(20))
     allergies: Mapped[Optional[str]] = mapped_column(Text)
     qr_token: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(20))
 
     disease_links: Mapped[List["PatientDisease"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan"
@@ -161,6 +162,8 @@ class PatientDoctorVisit(Base):
     prescription_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("prescriptions.prescription_id", ondelete="SET NULL"), unique=True
     )
+    # When the appointment happened; a patient's "last visit" is the newest one.
+    visit_date: Mapped[Optional[date]] = mapped_column(Date)
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
     doctor: Mapped["Doctor"] = relationship(back_populates="visits")
@@ -178,6 +181,8 @@ class Prescription(Base):
     prescription_id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True
     )
+    # When the prescription was written — the table's only timestamp.
+    created_on: Mapped[Optional[date]] = mapped_column(Date)
     transcript: Mapped[Optional[str]] = mapped_column(Text)
     case_paper_url: Mapped[Optional[str]] = mapped_column(String(500))
     status: Mapped[PrescriptionStatus] = mapped_column(

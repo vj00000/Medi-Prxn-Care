@@ -7,9 +7,13 @@ import Badge from '../../components/Badge'
 import { CURRENT_PATIENT_ID } from '../patientData'
 
 export default function Home() {
-  const { patients } = useApp()
+  const { patients, loading } = useApp()
   const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
   const { taken, markTaken, untake, ringNow } = useDoses()
+
+  if (loading) {
+    return <p className="px-1 text-sm text-slate-400">Loading your medicines…</p>
+  }
 
   if (!patient) return null
 

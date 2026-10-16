@@ -1,12 +1,12 @@
 /**
  * Single integration seam with the FastAPI backend.
  *
- * The read helpers below still resolve bundled demo data (shapes match
- * `backend/app/models.py`, so swapping them for `fetch` later needs no
- * component changes). The `extractPrescription`, `chatWithDraft` and
- * `createPrescription` calls are live.
+ * Everything below is served from Postgres. `timingSlots` is the one exception:
+ * it is a controlled vocabulary of allowed slot labels rather than data, so it
+ * stays a local constant — deriving it from `medication_schedules` would render
+ * an empty dropdown on a database with no schedules yet.
  */
-import { doctor, medicines, diseases, patients, prescriptions, timingSlots } from '../data/mock'
+import { timingSlots } from '../data/mock'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
@@ -22,14 +22,30 @@ async function readError(response) {
   return new Error(detail)
 }
 
+async function get(path) {
+  const response = await fetch(`${BASE}${path}`)
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
+async function post(path, body) {
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
 export const api = {
-  getDoctor: () => doctor,
-  listPatients: () => patients,
-  getPatient: (id) => patients.find((p) => p.patient_id === Number(id)),
-  listMedicines: () => medicines,
-  listDiseases: () => diseases,
+  /** The prescribing doctor — the first row of `doctors`. */
+  getDoctor: async () => (await get('/doctors'))[0] ?? null,
+  listPatients: () => get('/patients'),
+  listMedicines: () => get('/medicines'),
+  listDiseases: () => get('/diseases'),
+  listPrescriptions: () => get('/prescriptions'),
   listTimingSlots: () => timingSlots,
-  listPrescriptions: () => prescriptions,
   baseUrl: BASE,
 }
 
@@ -65,12 +81,7 @@ export async function chatWithDraft({ draft, message, history = [] }) {
  * Persist a doctor-confirmed prescription. Returns the saved record, which
  * includes a `warnings` array of patient-safety notes (e.g. allergy clashes).
  */
-export async function createPrescription(payload) {
-  const response = await fetch(`${BASE}/prescriptions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  if (!response.ok) throw await readError(response)
-  return response.json()
-}
+export const createPrescription = (payload) => post('/prescriptions', payload)
+
+/** Move a prescription to `approved` in the database. */
+export const approvePrescription = (id) => post(`/prescriptions/${id}/approve`)

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.clinical import allergy_terms, normalize_slot
 from app.database import get_db
 from app.models import (
     Doctor,
@@ -21,16 +22,6 @@ from app.models import (
 from app.schemas import MedicineLine, MedicineOut, PrescriptionCreate, PrescriptionOut
 
 router = APIRouter(prefix="/prescriptions", tags=["prescriptions"])
-
-# Values that mean "no allergy on record".
-_NO_ALLERGY = {"none", "none reported", "nil", "n/a", "na"}
-
-
-def _allergy_terms(patient: Patient) -> list[str]:
-    """`Patient.allergies` is a comma-separated string, not a list."""
-    raw = patient.allergies or ""
-    terms = [term.strip().lower() for term in raw.split(",") if term.strip()]
-    return [term for term in terms if term not in _NO_ALLERGY]
 
 
 def _resolve_medicine(db: Session, line: MedicineLine) -> Medicine | None:
@@ -70,6 +61,7 @@ def _to_out(db: Session, rx: Prescription, warnings: list[str] | None = None) ->
         transcript=rx.transcript,
         case_paper_url=rx.case_paper_url,
         lab_test=rx.lab_test.test_name if rx.lab_test else None,
+        created=rx.created_on,
         medicines=[
             MedicineOut(
                 medicine_id=link.medicine_id,
@@ -98,6 +90,7 @@ def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_d
     rx = Prescription(
         transcript=payload.transcript,
         case_paper_url=payload.case_paper_url,
+        created_on=date.today(),
         status=PrescriptionStatus.review,
     )
 
@@ -116,7 +109,7 @@ def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_d
     db.flush()
 
     warnings: list[str] = []
-    allergies = _allergy_terms(patient)
+    allergies = allergy_terms(patient)
     start = date.today()
 
     for line in payload.medicines:
@@ -140,7 +133,7 @@ def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_d
                 prescription_id=rx.prescription_id,
                 medicine_name=medicine.name,
                 dosage=line.dosage,
-                timing_slot=line.timing_slot,
+                timing_slot=normalize_slot(line.timing_slot),
                 start_date=start,
                 end_date=start + timedelta(days=line.duration_days)
                 if line.duration_days
@@ -161,6 +154,7 @@ def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_d
             patient_id=patient.patient_id,
             doctor_id=doctor.doctor_id,
             prescription_id=rx.prescription_id,
+            visit_date=start,
         )
     )
 

@@ -11,8 +11,16 @@ function initials(name) {
 
 export default function PatientDetail() {
   const { id } = useParams()
-  const { getPatient, getPrescriptionsFor } = useApp()
+  const { getPatient, getPrescriptionsFor, loading } = useApp()
   const patient = getPatient(id)
+
+  if (loading) {
+    return (
+      <div className="card p-10 text-center">
+        <p className="text-sm text-slate-500">Loading patient…</p>
+      </div>
+    )
+  }
 
   if (!patient) {
     return (
@@ -50,7 +58,13 @@ export default function PatientDetail() {
                 {patient.name}
               </h1>
               <p className="text-sm text-slate-500">
-                {patient.age} years · {patient.gender} · Last visit {patient.lastVisit}
+                {[
+                  `${patient.age} years`,
+                  patient.gender,
+                  patient.lastVisit && `Last visit ${patient.lastVisit}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </p>
             </div>
           </div>
@@ -63,9 +77,11 @@ export default function PatientDetail() {
           <span className="inline-flex items-center gap-2">
             <QrCode size={15} /> {patient.qr_token}
           </span>
-          <span className="inline-flex items-center gap-2">
-            <Phone size={15} /> {patient.phone}
-          </span>
+          {patient.phone && (
+            <span className="inline-flex items-center gap-2">
+              <Phone size={15} /> {patient.phone}
+            </span>
+          )}
         </div>
 
         {patient.allergies.length > 0 && (
