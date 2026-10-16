@@ -1,12 +1,19 @@
 import { createContext, useContext, useMemo, useState } from 'react'
-import { api } from '../lib/api'
+import { api, createPrescription } from '../lib/api'
 
 const AppContext = createContext(null)
 
-let nextPrescriptionId = 100
+function today() {
+  return new Date().toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+}
 
 export function AppProvider({ children }) {
   const [prescriptions, setPrescriptions] = useState(() => api.listPrescriptions())
+  const [warnings, setWarnings] = useState([])
 
   const value = useMemo(
     () => ({
@@ -16,14 +23,21 @@ export function AppProvider({ children }) {
       diseases: api.listDiseases(),
       timingSlots: api.listTimingSlots(),
       prescriptions,
+      warnings,
+      clearWarnings: () => setWarnings([]),
       getPatient: (id) => api.getPatient(id),
       getPrescriptionsFor: (patientId) =>
         prescriptions.filter((rx) => rx.patient_id === Number(patientId)),
-      addPrescription: (prescription) => {
-        const record = { ...prescription, prescription_id: nextPrescriptionId++ }
+
+      /** Persists to the API, then reflects the saved record locally. */
+      addPrescription: async (payload) => {
+        const saved = await createPrescription(payload)
+        const record = { ...saved, created: today() }
         setPrescriptions((prev) => [record, ...prev])
+        setWarnings(saved.warnings ?? [])
         return record
       },
+
       approvePrescription: (id) =>
         setPrescriptions((prev) =>
           prev.map((rx) =>
@@ -31,7 +45,7 @@ export function AppProvider({ children }) {
           ),
         ),
     }),
-    [prescriptions],
+    [prescriptions, warnings],
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

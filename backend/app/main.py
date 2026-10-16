@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routers import ai as ai_router
+from app.routers import prescriptions as prescriptions_router
 
 app = FastAPI(
     title="Smart Clinical Prescription & Patient Safety Ecosystem",
@@ -28,6 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(ai_router.router)
+app.include_router(prescriptions_router.router)
 
 
 @app.get("/", tags=["health"])

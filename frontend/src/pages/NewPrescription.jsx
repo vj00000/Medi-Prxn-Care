@@ -19,7 +19,7 @@ import SectionCard from '../components/SectionCard'
 export default function NewPrescription() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getPatient, medicines, timingSlots, addPrescription } = useApp()
+  const { getPatient, medicines, timingSlots, addPrescription, doctor } = useApp()
   const patient = getPatient(id)
 
   const [transcript, setTranscript] = useState('')
@@ -35,6 +35,7 @@ export default function NewPrescription() {
   const [extracting, setExtracting] = useState(false)
   const [extractNote, setExtractNote] = useState('')
   const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const recorderRef = useRef(null)
 
   if (!patient) {
@@ -135,25 +136,39 @@ export default function NewPrescription() {
     }
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault()
     if (!transcript.trim() && items.length === 0) {
       setError('Add a transcript or at least one medicine before submitting.')
       return
     }
-    addPrescription({
-      patient_id: patient.patient_id,
-      status: 'review',
-      created: new Date().toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      }),
-      lab_test: null,
-      transcript: transcript.trim(),
-      medicines: items.map((item) => ({ ...item, is_active: true })),
-    })
-    navigate('/prescriptions')
+
+    setError('')
+    setSubmitting(true)
+    try {
+      await addPrescription({
+        patient_id: patient.patient_id,
+        doctor_id: doctor.doctor_id,
+        transcript: transcript.trim(),
+        case_paper_url: null,
+        lab_test: null,
+        medicines: items.map((item) => ({
+          medicine_id: item.medicine_id,
+          name: item.name,
+          dosage: item.dosage,
+          timings: item.timings,
+          timing_slot:
+            timingSlots.find(
+              (slot) => slot.toLowerCase() === (item.timings ?? '').toLowerCase(),
+            ) ?? null,
+        })),
+      })
+      navigate('/prescriptions')
+    } catch (err) {
+      setError(`Could not save the prescription: ${err.message}`)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -333,7 +348,9 @@ export default function NewPrescription() {
         <Button type="button" variant="ghost" as={Link} to={`/patients/${patient.patient_id}`}>
           Cancel
         </Button>
-        <Button type="submit">Submit for review</Button>
+        <Button type="submit" loading={submitting} disabled={submitting}>
+          {submitting ? 'Saving…' : 'Submit for review'}
+        </Button>
       </div>
     </form>
   )
