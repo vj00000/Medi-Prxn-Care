@@ -437,7 +437,7 @@ export default function NewPrescription() {
         </p>
       </SectionCard>
 
-      <SectionCard title="Medicines & advice">
+      <SectionCard title="Prescription">
         {/* Vitals first, on one line, so they read as the header of the
             prescription rather than as a form of their own. */}
         <div className="flex flex-wrap items-center gap-5">
