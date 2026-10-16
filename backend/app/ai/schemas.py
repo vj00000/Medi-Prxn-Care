@@ -27,9 +27,10 @@ class PrescriptionDraft(BaseModel):
     bp: str | None = None
     spo2: str | None = None
 
-    # Lifestyle advice written on the case paper.
-    diet: str | None = None
-    exercise: str | None = None
+    # Everything else the doctor wrote down: diet, exercise, lifestyle,
+    # follow-up, precautions — kept as one free-form note rather than forced
+    # into fixed buckets.
+    advice: str | None = None
 
     notes: str | None = None
     confidence: float | None = None

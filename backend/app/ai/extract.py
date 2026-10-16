@@ -22,8 +22,7 @@ Return STRICT JSON with exactly this shape:
   "lab_tests": [string],
   "bp": string|null,
   "spo2": string|null,
-  "diet": string|null,
-  "exercise": string|null,
+  "advice": string|null,
   "medicines": [
     {
       "name": string,
@@ -43,8 +42,11 @@ Rules:
   written on the paper, use null. Missing values are expected and fine.
 - "bp" = the blood pressure reading exactly as written, e.g. "130/85 mmHg".
 - "spo2" = oxygen saturation, e.g. "98%".
-- "diet" = dietary advice written on the paper, e.g. "low salt, avoid sugar".
-- "exercise" = activity advice written on the paper, e.g. "30 min walk daily".
+- "advice" = ALL general advice written on the paper, gathered into ONE string.
+  This includes diet, exercise, lifestyle, follow-up timing, precautions or
+  anything else that is not a medicine or a vital. Do not split it into
+  categories and do not drop anything for not fitting a category.
+  Example: "low salt diet, avoid fried food, 30 min walk daily, review in 2 weeks"
 - "frequency" = how often a medicine is taken (once daily / twice daily / TDS).
 - "timing" = when to take it (morning / night / after meals).
 - "duration" = how long (e.g. "5 days").
@@ -65,8 +67,7 @@ def parse_draft(payload: dict) -> PrescriptionDraft:
         lab_tests=payload.get("lab_tests") or [],
         bp=payload.get("bp"),
         spo2=payload.get("spo2"),
-        diet=payload.get("diet"),
-        exercise=payload.get("exercise"),
+        advice=payload.get("advice"),
         medicines=[
             ExtractedMedicine(**item) for item in payload.get("medicines") or []
         ],
