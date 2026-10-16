@@ -326,7 +326,14 @@ export default function NewPrescription() {
         )}
       </div>
 
-      <SectionCard title="Case paper">
+      {/* Both entry points feed the same draft: photo of the case paper, or
+          chat / voice with the assistant. */}
+      <SectionCard title="Capture the prescription">
+        <p className="mb-3 text-xs text-slate-500">
+          Upload the case paper, or tell the assistant what to add — both fill the same
+          prescription below.
+        </p>
+
         <label
           className={`flex cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 text-sm transition-colors ${
             extracting
@@ -368,57 +375,15 @@ export default function NewPrescription() {
             {extractNote}
           </p>
         )}
-      </SectionCard>
 
-      <SectionCard title="Vitals & advice">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-500">
-              Blood pressure
-            </span>
-            <input
-              className="field"
-              placeholder="e.g. 130/85 mmHg"
-              value={vitals.bp}
-              onChange={(event) =>
-                setVitals((current) => ({ ...current, bp: event.target.value }))
-              }
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-500">SpO₂</span>
-            <input
-              className="field"
-              placeholder="e.g. 98%"
-              value={vitals.spo2}
-              onChange={(event) =>
-                setVitals((current) => ({ ...current, spo2: event.target.value }))
-              }
-            />
-          </label>
-          <label className="block sm:col-span-2">
-            <span className="mb-1 block text-xs font-medium text-slate-500">
-              General advice
-            </span>
-            <textarea
-              rows={3}
-              className="field resize-none"
-              placeholder="e.g. low salt diet, 30 min walk daily, review in 2 weeks"
-              value={vitals.advice}
-              onChange={(event) =>
-                setVitals((current) => ({ ...current, advice: event.target.value }))
-              }
-            />
-          </label>
+        <div className="my-4 flex items-center gap-3">
+          <span className="h-px flex-1 bg-slate-200" />
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
+            or ask
+          </span>
+          <span className="h-px flex-1 bg-slate-200" />
         </div>
-        <p className="mt-3 text-xs text-slate-400">
-          Read from the case paper on upload — diet, exercise, follow-up or anything else
-          written there. Carried into the consultation note; the database has no dedicated
-          column for it yet.
-        </p>
-      </SectionCard>
 
-      <SectionCard title="Ask the assistant">
         {chatMessages.length > 0 && (
           <ul className="mb-3 space-y-2">
             {chatMessages.map((message, index) => (
@@ -467,8 +432,56 @@ export default function NewPrescription() {
           </Button>
         </div>
         <p className="mt-2 text-xs text-slate-400">
-          The assistant edits the medicine list above — add, change or remove by voice or
-          text. Uses the browser&apos;s microphone; the AI key must be configured.
+          The assistant adds, changes or removes medicines by text or voice. Voice uses the
+          browser&apos;s microphone; the AI key must be configured.
+        </p>
+      </SectionCard>
+
+      <SectionCard title="Vitals & advice">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">
+              Blood pressure
+            </span>
+            <input
+              className="field"
+              placeholder="e.g. 130/85 mmHg"
+              value={vitals.bp}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, bp: event.target.value }))
+              }
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">SpO₂</span>
+            <input
+              className="field"
+              placeholder="e.g. 98%"
+              value={vitals.spo2}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, spo2: event.target.value }))
+              }
+            />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="mb-1 block text-xs font-medium text-slate-500">
+              General advice
+            </span>
+            <textarea
+              rows={3}
+              className="field resize-none"
+              placeholder="e.g. low salt diet, 30 min walk daily, review in 2 weeks"
+              value={vitals.advice}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, advice: event.target.value }))
+              }
+            />
+          </label>
+        </div>
+        <p className="mt-3 text-xs text-slate-400">
+          Read from the case paper on upload — diet, exercise, follow-up or anything else
+          written there. Carried into the consultation note; the database has no dedicated
+          column for it yet.
         </p>
       </SectionCard>
 
