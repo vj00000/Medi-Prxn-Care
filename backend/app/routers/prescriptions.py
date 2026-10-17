@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.availability import available_slots
 from app.clinical import allergy_terms, normalize_slot
 from app.database import get_db
 from app.models import (
@@ -231,6 +232,45 @@ def set_checkup(
         raise HTTPException(
             status_code=404, detail=f"Prescription {prescription_id} not found"
         )
+
+    if payload.next_checkup_date < date.today():
+        raise HTTPException(
+            status_code=422, detail="A follow-up cannot be booked in the past."
+        )
+
+    # A slot is only accepted if the doctor is genuinely free at that time.
+    if payload.next_checkup_time is not None:
+        visit = db.scalar(
+            select(PatientDoctorVisit).where(
+                PatientDoctorVisit.prescription_id == rx.prescription_id
+            )
+        )
+        if visit is None or visit.doctor_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail="This prescription has no doctor attached, so no slots exist.",
+            )
+
+        chosen = payload.next_checkup_time.replace(second=0, microsecond=0)
+        slots = available_slots(
+            db,
+            visit.doctor_id,
+            payload.next_checkup_date,
+            exclude_prescription_id=rx.prescription_id,
+        )
+        if chosen not in slots:
+            doctor = db.get(Doctor, visit.doctor_id)
+            name = doctor.name if doctor else "This doctor"
+            when = payload.next_checkup_date.strftime("%d %b %Y")
+            if not slots:
+                detail = f"{name} has no free slots on {when}."
+            else:
+                offered = ", ".join(slot.strftime("%H:%M") for slot in slots[:6])
+                detail = (
+                    f"{chosen.strftime('%H:%M')} is not free with {name} on {when}. "
+                    f"Available: {offered}."
+                )
+            raise HTTPException(status_code=409, detail=detail)
 
     rx.next_checkup_date = payload.next_checkup_date
     rx.next_checkup_time = payload.next_checkup_time

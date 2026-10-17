@@ -44,12 +44,23 @@ class DoctorOut(BaseModel):
     # Each doctor keeps their own booking link, so a patient reschedules against
     # the doctor who actually issued the prescription.
     calendly_url: str | None = None
+    # Length of one consulting slot, in minutes.
+    slot_minutes: int = 30
 
 
 class DoctorUpdate(BaseModel):
     """Set or clear a doctor's own scheduling link."""
 
     calendly_url: str | None = None
+
+
+class AvailabilityOut(BaseModel):
+    """The slots a doctor can still take on one day."""
+
+    doctor_id: int
+    date: date
+    slot_minutes: int = 30
+    slots: list[time] = Field(default_factory=list)
 
 
 class PrescriptionOut(BaseModel):

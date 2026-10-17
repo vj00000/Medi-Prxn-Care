@@ -45,10 +45,34 @@ class Doctor(Base):
     contact_number: Mapped[Optional[str]] = mapped_column(String(20))
     gender: Mapped[Optional[str]] = mapped_column(String(20))
     calendly_url: Mapped[Optional[str]] = mapped_column(String(255))
+    # Consulting-slot length used when generating bookable times.
+    slot_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
 
     visits: Mapped[List["PatientDoctorVisit"]] = relationship(
         back_populates="doctor", cascade="all, delete-orphan"
     )
+    availability: Mapped[List["DoctorAvailability"]] = relationship(
+        back_populates="doctor", cascade="all, delete-orphan"
+    )
+
+
+class DoctorAvailability(Base):
+    """A doctor's weekly consulting window. Several may share a weekday."""
+
+    __tablename__ = "doctor_availability"
+
+    availability_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    doctor_id: Mapped[int] = mapped_column(
+        ForeignKey("doctors.doctor_id", ondelete="CASCADE"), nullable=False
+    )
+    # 0 = Monday ... 6 = Sunday, matching date.weekday().
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+    doctor: Mapped["Doctor"] = relationship(back_populates="availability")
 
 
 # --------------------------------------------------------------------------- #

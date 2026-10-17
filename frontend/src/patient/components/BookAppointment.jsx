@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { CalendarDays, X } from 'lucide-react'
+import { CalendarDays, Loader2, X } from 'lucide-react'
 import Button from '../../components/Button'
-import { formatCheckup, todayIso } from '../patientData'
+import { getAvailability } from '../../lib/api'
+import { formatLongDate, formatTime, todayIso } from '../patientData'
 
 const SCRIPT_SRC = 'https://assets.calendly.com/assets/external/widget.js'
 
@@ -36,15 +37,15 @@ function localSlot(start) {
 }
 
 /**
- * Reschedule a follow-up with the doctor who issued the prescription.
+ * Reschedule against the doctor who issued the prescription.
  *
- * The Calendly embed is offered when that doctor has their own link, but it is
- * never the only way out: Calendly reports a completed booking on the window
- * `message` bus, and that event does not always carry a parseable start time.
- * The date and time fields below are the guaranteed path.
+ * The patient never types a time — they pick from the slots that doctor can
+ * actually take, served by GET /doctors/{id}/availability. The backend rejects
+ * anything else, so a stale tab cannot book a taken or closed slot.
  */
 export default function BookAppointment({
   doctor,
+  prescriptionId,
   currentIso,
   currentTime,
   onBooked,
@@ -54,6 +55,8 @@ export default function BookAppointment({
   const [status, setStatus] = useState(doctor?.calendly_url ? 'loading' : 'none')
   const [date, setDate] = useState(currentIso ?? '')
   const [time, setTime] = useState(currentTime ? String(currentTime).slice(0, 5) : '')
+  const [slots, setSlots] = useState([])
+  const [slotState, setSlotState] = useState('idle')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -69,7 +72,6 @@ export default function BookAppointment({
       const payload = event.data
       if (!payload || payload.event !== 'calendly.event_scheduled') return
       const slot = localSlot(payload.payload?.event?.start_time)
-      // No start_time => leave the fields to the patient rather than no-op.
       if (!slot) return
       setDate(slot.date)
       setTime(slot.time)
@@ -96,16 +98,47 @@ export default function BookAppointment({
     }
   }, [doctor])
 
+  useEffect(() => {
+    if (!date || !doctor?.doctor_id) {
+      setSlots([])
+      setSlotState('idle')
+      return undefined
+    }
+
+    let cancelled = false
+    setSlotState('loading')
+
+    getAvailability(doctor.doctor_id, date, prescriptionId)
+      .then((data) => {
+        if (cancelled) return
+        setSlots((data.slots ?? []).map((slot) => String(slot).slice(0, 5)))
+        setSlotState('ready')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSlots([])
+        setSlotState('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [doctor, date, prescriptionId])
+
   async function save(event) {
     event.preventDefault()
     if (!date) {
       setError('Pick a date first.')
       return
     }
+    if (!time) {
+      setError('Pick one of the available slots.')
+      return
+    }
     setError('')
     setSaving(true)
     try {
-      await onBooked(date, time || null)
+      await onBooked(date, time)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -140,66 +173,118 @@ export default function BookAppointment({
           {currentIso && (
             <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
               Currently scheduled for{' '}
-              <strong>{formatCheckup(currentIso, currentTime)}</strong>.
+              <strong>
+                {formatLongDate(currentIso)}
+                {currentTime ? `, ${formatTime(currentTime)}` : ' (time not set)'}
+              </strong>
+              .
             </p>
           )}
 
           {doctor?.calendly_url && status !== 'failed' && (
             <>
               <p className="mb-2 text-xs font-medium text-slate-600">
-                Pick a slot on {doctor.name}'s calendar
+                Book on {doctor.name}'s Calendly
               </p>
               <div
                 ref={container}
-                className="min-h-[520px] overflow-hidden rounded-xl border border-slate-200"
+                className="min-h-[480px] overflow-hidden rounded-xl border border-slate-200"
               />
               <p className="mt-3 text-center text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                or set the slot directly
+                or pick from their open slots
               </p>
             </>
           )}
 
           {status === 'failed' && (
             <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {doctor?.name}'s Calendly could not be loaded. Use the fields below.
+              {doctor?.name}'s Calendly could not be loaded. Pick a slot below.
             </p>
           )}
 
-          {status === 'none' && (
+          {status === 'none' && doctor && (
             <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              {doctor?.name ?? 'This doctor'} has not connected a booking calendar yet. Pick a
-              slot below and the clinic will confirm.
+              {doctor.name} has not connected a booking calendar. Pick a slot below.
             </p>
           )}
 
-          <div className="mt-1 grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-600">Date</span>
-              <input
-                type="date"
-                className="field"
-                value={date}
-                min={todayIso()}
-                onChange={(event) => setDate(event.target.value)}
-              />
-            </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Date</span>
+            <input
+              type="date"
+              className="field"
+              value={date}
+              min={todayIso()}
+              onChange={(event) => {
+                setDate(event.target.value)
+                setTime('')
+                setError('')
+              }}
+            />
+          </label>
 
-            <label className="block">
-              <span className="mb-1 block text-xs font-medium text-slate-600">
-                Time <span className="font-normal text-slate-400">(optional)</span>
-              </span>
-              <input
-                type="time"
-                className="field"
-                value={time}
-                onChange={(event) => setTime(event.target.value)}
-              />
-            </label>
-          </div>
+          {date && (
+            <div className="mt-3">
+              <p className="mb-1.5 text-xs font-medium text-slate-600">
+                Available slots
+                {doctor?.slot_minutes ? (
+                  <span className="ml-1 font-normal text-slate-400">
+                    ({doctor.slot_minutes} min each)
+                  </span>
+                ) : null}
+              </p>
 
-          {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+              {slotState === 'loading' && (
+                <p className="inline-flex items-center gap-1.5 text-xs text-slate-400">
+                  <Loader2 size={13} className="animate-spin" /> Checking the calendar…
+                </p>
+              )}
 
-          <Button type="submit" loading={saving} className="mt-4 w-full">
+              {slotState === 'error' && (
+                <p className="text-xs text-rose-600">Could not load availability.</p>
+              )}
+
+              {slotState === 'ready' && slots.length === 0 && (
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  No free slots on {formatLongDate(date)}. Try another day.
+                </p>
+              )}
+
+              {slotState === 'ready' && slots.length > 0 && (
+                <div className="grid grid-cols-4 gap-1.5">
+                  {slots.map((slot) => {
+                    const active = slot === time
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => {
+                          setTime(slot)
+                          setError('')
+                        }}
+                        className={`rounded-lg border px-1 py-1.5 text-[11px] font-medium transition-colors ${
+                          active
+                            ? 'border-brand-600 bg-brand-600 text-white'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
+                        }`}
+                      >
+                        {formatTime(slot)}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
+
+          <Button
+            type="submit"
+            loading={saving}
+            disabled={!date || !time}
+            className="mt-4 w-full"
+          >
             <CalendarDays size={15} /> {currentIso ? 'Save new slot' : 'Confirm slot'}
           </Button>
         </div>

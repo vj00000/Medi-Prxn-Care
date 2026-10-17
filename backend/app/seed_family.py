@@ -6,13 +6,14 @@ base seed (doctors, patients) already exists.
     docker compose exec -T api python -m app.seed_family
 """
 
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 from sqlalchemy import func, select
 
 from app.database import SessionLocal
 from app.models import (
     Doctor,
+    DoctorAvailability,
     Family,
     Medicine,
     MedicationSchedule,
@@ -28,6 +29,14 @@ FAMILY_NAME = "Rao Family"
 # calendar via PATCH /doctors/{id}. An event-type URL (.../<owner>/<event>)
 # embeds reliably; a bare profile URL only shows the list of event types.
 CALENDLY_URL = "https://calendly.com/yogsamarpanam-app"
+
+# Mon-Fri two sessions, Saturday mornings only: Sunday stays closed, so a
+# patient cannot book a weekend slot that does not exist.
+WEEKLY_WINDOWS = [
+    *[(weekday, time(9, 0), time(13, 0)) for weekday in range(5)],
+    *[(weekday, time(15, 0), time(18, 0)) for weekday in range(5)],
+    (5, time(9, 0), time(12, 0)),
+]
 
 
 def _medicine(db, name: str, brand: str | None = None) -> Medicine:
@@ -147,6 +156,25 @@ def seed() -> None:
         if not doctor.calendly_url:
             doctor.calendly_url = CALENDLY_URL
             print(f"  doctor calendly_url -> {CALENDLY_URL}")
+
+        # Weekly windows, so the patient picks from real slots rather than
+        # inventing a time.
+        if not db.scalar(
+            select(DoctorAvailability).where(
+                DoctorAvailability.doctor_id == doctor.doctor_id
+            )
+        ):
+            for weekday, start, end in WEEKLY_WINDOWS:
+                db.add(
+                    DoctorAvailability(
+                        doctor_id=doctor.doctor_id,
+                        weekday=weekday,
+                        start_time=start,
+                        end_time=end,
+                    )
+                )
+            db.flush()
+            print(f"  doctor availability -> {len(WEEKLY_WINDOWS)} window(s)")
 
         family = db.scalar(select(Family).where(Family.name == FAMILY_NAME))
         if family is None:

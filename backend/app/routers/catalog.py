@@ -1,12 +1,21 @@
 """Reference data the prescribing form picks from."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.availability import available_slots
 from app.database import get_db
 from app.models import Disease, Doctor, Medicine
-from app.schemas import DiseaseOut, DoctorOut, DoctorUpdate, MedicineCatalogOut
+from app.schemas import (
+    AvailabilityOut,
+    DiseaseOut,
+    DoctorOut,
+    DoctorUpdate,
+    MedicineCatalogOut,
+)
 
 router = APIRouter(tags=["catalog"])
 
@@ -34,6 +43,30 @@ def update_doctor(doctor_id: int, payload: DoctorUpdate, db: Session = Depends(g
     db.commit()
     db.refresh(doctor)
     return doctor
+
+
+@router.get("/doctors/{doctor_id}/availability", response_model=AvailabilityOut)
+def doctor_availability(
+    doctor_id: int,
+    day: date = Query(..., alias="date", description="ISO date, e.g. 2026-11-02"),
+    exclude: int | None = Query(
+        None, description="Prescription to treat as free (rescheduling itself)"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Slots the doctor can still take on one day, excluding booked and past."""
+    doctor = db.get(Doctor, doctor_id)
+    if doctor is None:
+        raise HTTPException(status_code=404, detail=f"Doctor {doctor_id} not found")
+
+    return AvailabilityOut(
+        doctor_id=doctor_id,
+        date=day,
+        slot_minutes=doctor.slot_minutes or 30,
+        slots=available_slots(
+            db, doctor_id, day, exclude_prescription_id=exclude
+        ),
+    )
 
 
 @router.get("/medicines", response_model=list[MedicineCatalogOut])

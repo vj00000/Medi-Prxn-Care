@@ -287,6 +287,7 @@ export default function Home() {
       {booking && (
         <BookAppointment
           doctor={nextCheckup?.doctor ?? mine[0]?.doctor ?? doctor}
+          prescriptionId={nextCheckup?.prescription_id ?? mine[0]?.prescription_id}
           currentIso={nextCheckup?.next_checkup_date ?? null}
           currentTime={nextCheckup?.next_checkup_time ?? null}
           onBooked={async (iso, slot) => {

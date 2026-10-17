@@ -102,6 +102,13 @@ export async function setPrescriptionPrivacy(id, isPrivate) {
   return response.json()
 }
 
+/** Slots a doctor can still take on one day. */
+export function getAvailability(doctorId, isoDate, excludePrescriptionId = null) {
+  const params = new URLSearchParams({ date: isoDate })
+  if (excludePrescriptionId != null) params.set('exclude', excludePrescriptionId)
+  return get(`/doctors/${doctorId}/availability?${params.toString()}`)
+}
+
 /** Record the follow-up slot the patient picked (Calendly or by hand). */
 export const setCheckup = (id, isoDate, isoTime = null) =>
   post(`/prescriptions/${id}/checkup`, {

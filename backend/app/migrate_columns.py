@@ -22,6 +22,16 @@ CREATE_TABLES = [
         name      VARCHAR(100) NOT NULL
     )
     """,
+    # Weekly consulting windows, used to generate the slots a patient may book.
+    """
+    CREATE TABLE IF NOT EXISTS doctor_availability (
+        availability_id SERIAL PRIMARY KEY,
+        doctor_id       INTEGER NOT NULL REFERENCES doctors(doctor_id) ON DELETE CASCADE,
+        weekday         INTEGER NOT NULL,
+        start_time      TIME NOT NULL,
+        end_time        TIME NOT NULL
+    )
+    """,
 ]
 
 ADD_COLUMNS = [
@@ -37,6 +47,7 @@ ADD_COLUMNS = [
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_date DATE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_time TIME",
     "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS calendly_url VARCHAR(255)",
+    "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS slot_minutes INTEGER NOT NULL DEFAULT 30",
 ]
 
 # A prescription's date is recoverable: its medication schedules were created
