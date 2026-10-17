@@ -74,6 +74,7 @@ def _to_out(db: Session, rx: Prescription, warnings: list[str] | None = None) ->
         created=rx.created_on,
         is_private=rx.is_private,
         next_checkup_date=rx.next_checkup_date,
+        next_checkup_time=rx.next_checkup_time,
         medicines=[
             MedicineOut(
                 medicine_id=link.medicine_id,
@@ -224,7 +225,7 @@ def set_privacy(
 def set_checkup(
     prescription_id: int, payload: CheckupUpdate, db: Session = Depends(get_db)
 ):
-    """Record the follow-up date the patient picked in Calendly."""
+    """Record the follow-up slot the patient picked in Calendly or by hand."""
     rx = db.get(Prescription, prescription_id)
     if rx is None:
         raise HTTPException(
@@ -232,6 +233,7 @@ def set_checkup(
         )
 
     rx.next_checkup_date = payload.next_checkup_date
+    rx.next_checkup_time = payload.next_checkup_time
     db.commit()
     db.refresh(rx)
     return _to_out(db, rx)

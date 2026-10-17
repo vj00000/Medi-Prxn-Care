@@ -102,9 +102,12 @@ export async function setPrescriptionPrivacy(id, isPrivate) {
   return response.json()
 }
 
-/** Record the follow-up date the patient picked in Calendly. */
-export const setCheckup = (id, isoDate) =>
-  post(`/prescriptions/${id}/checkup`, { next_checkup_date: isoDate })
+/** Record the follow-up slot the patient picked (Calendly or by hand). */
+export const setCheckup = (id, isoDate, isoTime = null) =>
+  post(`/prescriptions/${id}/checkup`, {
+    next_checkup_date: isoDate,
+    next_checkup_time: isoTime,
+  })
 
 /** Patient-side assistant: "book my checkup in two weeks". */
 export const patientChat = (patientId, message) =>

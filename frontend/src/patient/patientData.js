@@ -49,6 +49,32 @@ export function formatLongDate(iso) {
   })
 }
 
+/** '10:30:00' or '10:30' -> '10:30 AM'. */
+export function formatTime(isoTime) {
+  if (!isoTime) return null
+  const [rawHour, rawMinute] = String(isoTime).split(':')
+  const hour = Number(rawHour)
+  if (!Number.isFinite(hour)) return null
+  const suffix = hour >= 12 ? 'PM' : 'AM'
+  const display = hour % 12 === 0 ? 12 : hour % 12
+  return `${display}:${String(rawMinute ?? '00').padStart(2, '0')} ${suffix}`
+}
+
+/** Date and slot together: '31 Oct 2026, 10:30 AM'. */
+export function formatCheckup(isoDate, isoTime) {
+  const date = formatLongDate(isoDate)
+  if (!date) return null
+  const slot = formatTime(isoTime)
+  return slot ? `${date}, ${slot}` : date
+}
+
+/** Hour of the appointment slot, or undefined when only a day was chosen. */
+export function checkupHour(isoTime) {
+  if (!isoTime) return undefined
+  const hour = Number(String(isoTime).split(':')[0])
+  return Number.isFinite(hour) ? hour : undefined
+}
+
 /** Builds a Tata 1mg medicine search link (no partnership implied). */
 export function oneMgUrl(medicineName) {
   return `https://www.1mg.com/search/all?name=${encodeURIComponent(medicineName)}`

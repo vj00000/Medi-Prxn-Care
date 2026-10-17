@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { AlarmClock, CalendarClock, Check, Clock } from 'lucide-react'
 import { useDoses } from '../doseContext'
-import { formatLongDate, slotHour } from '../patientData'
+import { formatCheckup, slotHour } from '../patientData'
 import Button from '../../components/Button'
 
 const BEEP_INTERVAL_MS = 1500
@@ -79,7 +79,7 @@ export default function DoseAlarm() {
             Follow-up due today
           </p>
           <p className="mt-1 text-lg font-bold text-slate-900">
-            {formatLongDate(checkup.next_checkup_date)}
+            {formatCheckup(checkup.next_checkup_date, checkup.next_checkup_time)}
           </p>
           <p className="mt-1 text-sm text-slate-500">
             Time for your checkup — book a slot with your doctor.

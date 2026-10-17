@@ -7,7 +7,7 @@ explicit first argument to ``mapped_column``.
 """
 
 import enum
-from datetime import date
+from datetime import date, time
 from typing import List, Optional
 
 from sqlalchemy import (
@@ -18,6 +18,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -207,6 +208,8 @@ class Prescription(Base):
     is_private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Follow-up appointment the patient should attend.
     next_checkup_date: Mapped[Optional[date]] = mapped_column(Date)
+    # Wall-clock slot on that date. Null means the patient picked a day only.
+    next_checkup_time: Mapped[Optional[time]] = mapped_column(Time)
     transcript: Mapped[Optional[str]] = mapped_column(Text)
     case_paper_url: Mapped[Optional[str]] = mapped_column(String(500))
     status: Mapped[PrescriptionStatus] = mapped_column(

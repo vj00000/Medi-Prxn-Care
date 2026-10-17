@@ -5,7 +5,7 @@ import SectionCard from '../../components/SectionCard'
 import Badge, { StatusBadge } from '../../components/Badge'
 import Button from '../../components/Button'
 import BookAppointment from '../components/BookAppointment'
-import { CURRENT_PATIENT_ID, formatLongDate, oneMgUrl } from '../patientData'
+import { CURRENT_PATIENT_ID, formatCheckup, oneMgUrl } from '../patientData'
 
 export default function Prescriptions() {
   const { prescriptions, doctor, togglePrivacy, setCheckupDate } = useApp()
@@ -98,9 +98,12 @@ export default function Prescriptions() {
               </button>
 
               <div className="flex items-center gap-2">
+                {rx.doctor?.name && (
+                  <span className="text-[11px] text-slate-400">{rx.doctor.name}</span>
+                )}
                 {rx.next_checkup_date && (
-                  <span className="text-[11px] font-medium text-slate-500">
-                    {formatLongDate(rx.next_checkup_date)}
+                  <span className="text-[11px] font-medium text-slate-600">
+                    {formatCheckup(rx.next_checkup_date, rx.next_checkup_time)}
                   </span>
                 )}
                 <Button size="sm" variant="ghost" onClick={() => setBooking(rx)}>
@@ -116,8 +119,9 @@ export default function Prescriptions() {
         <BookAppointment
           doctor={booking.doctor ?? doctor}
           currentIso={booking.next_checkup_date}
-          onBooked={async (iso) => {
-            await setCheckupDate(booking.prescription_id, iso)
+          currentTime={booking.next_checkup_time}
+          onBooked={async (iso, slot) => {
+            await setCheckupDate(booking.prescription_id, iso, slot)
             setBooking(null)
           }}
           onClose={() => setBooking(null)}

@@ -1,6 +1,6 @@
 """Request/response models for the API layer."""
 
-from datetime import date
+from datetime import date, time
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -69,6 +69,8 @@ class PrescriptionOut(BaseModel):
     is_private: bool = False
     # Follow-up appointment the patient should attend.
     next_checkup_date: date | None = None
+    # Slot on that date; null when only a day was chosen.
+    next_checkup_time: time | None = None
     medicines: list[MedicineOut] = Field(default_factory=list)
     # Non-blocking patient-safety notes (e.g. recorded-allergy conflicts).
     warnings: list[str] = Field(default_factory=list)
@@ -152,6 +154,8 @@ class PrivacyUpdate(BaseModel):
 
 class CheckupUpdate(BaseModel):
     next_checkup_date: date
+    # Optional slot. Omitted or null keeps the appointment date-only.
+    next_checkup_time: time | None = None
 
 
 # --------------------------------------------------------------------------- #

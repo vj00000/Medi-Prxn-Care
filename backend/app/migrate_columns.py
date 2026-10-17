@@ -35,6 +35,7 @@ ADD_COLUMNS = [
     "ALTER TABLE patients ADD COLUMN IF NOT EXISTS relation VARCHAR(20)",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_date DATE",
+    "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_time TIME",
     "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS calendly_url VARCHAR(255)",
 ]
 

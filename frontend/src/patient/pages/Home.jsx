@@ -18,7 +18,7 @@ import Badge from '../../components/Badge'
 import Button from '../../components/Button'
 import AddFamilyMember from '../components/AddFamilyMember'
 import BookAppointment from '../components/BookAppointment'
-import { CURRENT_PATIENT_ID, formatLongDate, reorderStatus } from '../patientData'
+import { CURRENT_PATIENT_ID, formatCheckup, reorderStatus } from '../patientData'
 
 const RELATION_LABEL = {
   self: 'You',
@@ -228,7 +228,9 @@ export default function Home() {
           title="Follow-up"
           action={
             nextCheckup ? (
-              <Badge tone="review">{formatLongDate(nextCheckup.next_checkup_date)}</Badge>
+              <Badge tone="review">
+                {formatCheckup(nextCheckup.next_checkup_date, nextCheckup.next_checkup_time)}
+              </Badge>
             ) : null
           }
         >
@@ -286,9 +288,10 @@ export default function Home() {
         <BookAppointment
           doctor={nextCheckup?.doctor ?? mine[0]?.doctor ?? doctor}
           currentIso={nextCheckup?.next_checkup_date ?? null}
-          onBooked={async (iso) => {
+          currentTime={nextCheckup?.next_checkup_time ?? null}
+          onBooked={async (iso, slot) => {
             const target = nextCheckup ?? mine[0]
-            if (target) await setCheckupDate(target.prescription_id, iso)
+            if (target) await setCheckupDate(target.prescription_id, iso, slot)
             setBooking(false)
           }}
           onClose={() => setBooking(false)}

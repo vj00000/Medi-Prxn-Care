@@ -114,6 +114,8 @@ def patient_chat(payload: PatientChatRequest, db: Session = Depends(get_db)):
         )
 
     rx.next_checkup_date = target
+    # The request was date-only, so drop any slot left from an earlier booking.
+    rx.next_checkup_time = None
     db.commit()
     db.refresh(rx)
 

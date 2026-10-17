@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react'
 import { useApp } from '../store/AppStore'
-import { CURRENT_PATIENT_ID, dueDoses, todayIso } from './patientData'
+import { CURRENT_PATIENT_ID, checkupHour, dueDoses, todayIso } from './patientData'
 
 const DoseContext = createContext(null)
 
@@ -68,12 +68,16 @@ export function DoseProvider({ children }) {
 
   /** The patient's follow-up falls due today and has not been dismissed. */
   const checkup = useMemo(() => {
-    const today = todayIso()
+    const now = new Date()
+    const today = todayIso(now)
     const due = prescriptions.find(
       (rx) =>
         rx.patient_id === CURRENT_PATIENT_ID && rx.next_checkup_date === today,
     )
-    return due && !dismissedCheckups[today] ? due : null
+    if (!due || dismissedCheckups[today]) return null
+    // With a slot time, stay quiet until the appointment hour arrives.
+    const hour = checkupHour(due.next_checkup_time)
+    return hour !== undefined && now.getHours() < hour ? null : due
   }, [prescriptions, dismissedCheckups])
 
   const markTaken = useCallback((id) => {

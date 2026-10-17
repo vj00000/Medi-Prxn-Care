@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { CalendarDays, X } from 'lucide-react'
 import Button from '../../components/Button'
-import { formatLongDate, todayIso } from '../patientData'
+import { formatCheckup, todayIso } from '../patientData'
 
 const SCRIPT_SRC = 'https://assets.calendly.com/assets/external/widget.js'
 
@@ -22,17 +22,38 @@ function loadCalendly() {
 }
 
 /**
+ * Calendly reports the slot in UTC; the patient reads local wall-clock time,
+ * which is also what the clinic means by "10:30".
+ */
+function localSlot(start) {
+  const parsed = new Date(start)
+  if (Number.isNaN(parsed.getTime())) return null
+  const pad = (value) => String(value).padStart(2, '0')
+  return {
+    date: `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`,
+    time: `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`,
+  }
+}
+
+/**
  * Reschedule a follow-up with the doctor who issued the prescription.
  *
  * The Calendly embed is offered when that doctor has their own link, but it is
  * never the only way out: Calendly reports a completed booking on the window
  * `message` bus, and that event does not always carry a parseable start time.
- * The date field below is the guaranteed path, so rescheduling always works.
+ * The date and time fields below are the guaranteed path.
  */
-export default function BookAppointment({ doctor, currentIso, onBooked, onClose }) {
+export default function BookAppointment({
+  doctor,
+  currentIso,
+  currentTime,
+  onBooked,
+  onClose,
+}) {
   const container = useRef(null)
   const [status, setStatus] = useState(doctor?.calendly_url ? 'loading' : 'none')
   const [date, setDate] = useState(currentIso ?? '')
+  const [time, setTime] = useState(currentTime ? String(currentTime).slice(0, 5) : '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -47,9 +68,11 @@ export default function BookAppointment({ doctor, currentIso, onBooked, onClose 
     function onMessage(event) {
       const payload = event.data
       if (!payload || payload.event !== 'calendly.event_scheduled') return
-      const start = payload.payload?.event?.start_time
-      // No start_time => leave it to the date field rather than silently no-op.
-      if (start) setDate(String(start).slice(0, 10))
+      const slot = localSlot(payload.payload?.event?.start_time)
+      // No start_time => leave the fields to the patient rather than no-op.
+      if (!slot) return
+      setDate(slot.date)
+      setTime(slot.time)
     }
 
     window.addEventListener('message', onMessage)
@@ -82,7 +105,7 @@ export default function BookAppointment({ doctor, currentIso, onBooked, onClose 
     setError('')
     setSaving(true)
     try {
-      await onBooked(date)
+      await onBooked(date, time || null)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -116,7 +139,8 @@ export default function BookAppointment({ doctor, currentIso, onBooked, onClose 
         <div className="px-5 py-4">
           {currentIso && (
             <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              Currently scheduled for <strong>{formatLongDate(currentIso)}</strong>.
+              Currently scheduled for{' '}
+              <strong>{formatCheckup(currentIso, currentTime)}</strong>.
             </p>
           )}
 
@@ -125,41 +149,58 @@ export default function BookAppointment({ doctor, currentIso, onBooked, onClose 
               <p className="mb-2 text-xs font-medium text-slate-600">
                 Pick a slot on {doctor.name}'s calendar
               </p>
-              <div ref={container} className="min-h-[520px] overflow-hidden rounded-xl border border-slate-200" />
+              <div
+                ref={container}
+                className="min-h-[520px] overflow-hidden rounded-xl border border-slate-200"
+              />
               <p className="mt-3 text-center text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                or set the date directly
+                or set the slot directly
               </p>
             </>
           )}
 
           {status === 'failed' && (
             <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {doctor?.name}'s Calendly could not be loaded. Use the date below.
+              {doctor?.name}'s Calendly could not be loaded. Use the fields below.
             </p>
           )}
 
           {status === 'none' && (
             <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              {doctor?.name ?? 'This doctor'} has not connected a booking calendar yet. Pick a date
-              below and the clinic will confirm.
+              {doctor?.name ?? 'This doctor'} has not connected a booking calendar yet. Pick a
+              slot below and the clinic will confirm.
             </p>
           )}
 
-          <label className="mt-1 block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">Follow-up date</span>
-            <input
-              type="date"
-              className="field"
-              value={date}
-              min={todayIso()}
-              onChange={(event) => setDate(event.target.value)}
-            />
-          </label>
+          <div className="mt-1 grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Date</span>
+              <input
+                type="date"
+                className="field"
+                value={date}
+                min={todayIso()}
+                onChange={(event) => setDate(event.target.value)}
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">
+                Time <span className="font-normal text-slate-400">(optional)</span>
+              </span>
+              <input
+                type="time"
+                className="field"
+                value={time}
+                onChange={(event) => setTime(event.target.value)}
+              />
+            </label>
+          </div>
 
           {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
 
           <Button type="submit" loading={saving} className="mt-4 w-full">
-            <CalendarDays size={15} /> {currentIso ? 'Save new date' : 'Confirm date'}
+            <CalendarDays size={15} /> {currentIso ? 'Save new slot' : 'Confirm slot'}
           </Button>
         </div>
       </form>
