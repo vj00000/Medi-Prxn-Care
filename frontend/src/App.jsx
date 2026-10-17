@@ -10,6 +10,7 @@ import PatientLayout from './patient/PatientLayout'
 import PatientHome from './patient/pages/Home'
 import PatientTimeline from './patient/pages/Timeline'
 import PatientPrescriptions from './patient/pages/Prescriptions'
+import PatientCart from './patient/pages/Cart'
 import PatientProfile from './patient/pages/Profile'
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
           <Route index element={<PatientHome />} />
           <Route path="timeline" element={<PatientTimeline />} />
           <Route path="prescriptions" element={<PatientPrescriptions />} />
+          <Route path="cart" element={<PatientCart />} />
           <Route path="profile" element={<PatientProfile />} />
         </Route>
 

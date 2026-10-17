@@ -10,7 +10,7 @@ function initials(name) {
 }
 
 export default function Dashboard() {
-  const { doctor, patients, prescriptions } = useApp()
+  const { doctor, patients, prescriptions, loading } = useApp()
 
   const awaiting = prescriptions.filter((rx) => rx.status === 'review').length
   const activeMeds = patients.reduce(
@@ -24,12 +24,20 @@ export default function Dashboard() {
     year: 'numeric',
   })
 
+  if (loading) {
+    return (
+      <div className="card p-10 text-center">
+        <p className="text-sm text-slate-500">Loading your dashboard…</p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-8">
       <header>
         <p className="text-sm text-slate-500">{today}</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">
-          Welcome back, {doctor.name}
+          Welcome back, {doctor?.name}
         </h1>
       </header>
 
@@ -53,7 +61,13 @@ export default function Dashboard() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-semibold text-slate-900">{patient.name}</p>
                   <p className="truncate text-xs text-slate-500">
-                    {patient.age} yrs · {patient.gender} · Last visit {patient.lastVisit}
+                    {[
+                      `${patient.age} yrs`,
+                      patient.gender,
+                      patient.lastVisit && `Last visit ${patient.lastVisit}`,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </p>
                 </div>
                 {patient.allergies.length > 0 && <Badge tone="danger">Allergy</Badge>}

@@ -1,29 +1,73 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, ImagePlus, Mic, Plus, Square, Trash2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ImagePlus,
+  Loader2,
+  Mic,
+  Plus,
+  Send,
+  Square,
+  Trash2,
+} from 'lucide-react'
 import { useApp } from '../store/AppStore'
+import { chatWithDraft, extractPrescription } from '../lib/api'
 import Badge from '../components/Badge'
 import Button from '../components/Button'
 import SectionCard from '../components/SectionCard'
 
+const EMPTY_VITALS = { bp: '', spo2: '', advice: '' }
+
+function getSpeechRecognition() {
+  const Impl = window.SpeechRecognition || window.webkitSpeechRecognition
+  return Impl ? new Impl() : null
+}
+
 export default function NewPrescription() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getPatient, medicines, timingSlots, addPrescription } = useApp()
+  const { getPatient, medicines, timingSlots, addPrescription, doctor, loading } = useApp()
   const patient = getPatient(id)
 
   const [transcript, setTranscript] = useState('')
   const [items, setItems] = useState([])
+  const [vitals, setVitals] = useState(EMPTY_VITALS)
   const [draft, setDraft] = useState({
     medicine_id: String(medicines[0]?.id ?? ''),
     dosage: '',
     timings: timingSlots[0],
   })
-  const [recording, setRecording] = useState(false)
+  // null | 'transcript' | 'chat' — which field the microphone is filling.
+  const [listening, setListening] = useState(null)
   const [notice, setNotice] = useState('')
   const [casePaper, setCasePaper] = useState('')
+  const [extracting, setExtracting] = useState(false)
+  const [extractNote, setExtractNote] = useState('')
   const [error, setError] = useState('')
-  const recorderRef = useRef(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [chatInput, setChatInput] = useState('')
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatting, setChatting] = useState(false)
+
+  const recognitionRef = useRef(null)
+  const dictationBaseRef = useRef('')
+
+  // `medicines` is fetched from the API after the first render, so the select
+  // starts empty and has to be seeded once the catalog arrives.
+  useEffect(() => {
+    if (!draft.medicine_id && medicines.length > 0) {
+      setDraft((current) => ({ ...current, medicine_id: String(medicines[0].id) }))
+    }
+  }, [medicines, draft.medicine_id])
+
+  if (loading) {
+    return (
+      <div className="card p-10 text-center">
+        <p className="text-sm text-slate-500">Loading patient…</p>
+      </div>
+    )
+  }
 
   if (!patient) {
     return (
@@ -37,6 +81,69 @@ export default function NewPrescription() {
         </Link>
       </div>
     )
+  }
+
+  function stopDictation() {
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
+    setListening(null)
+  }
+
+  /**
+   * Dictate into the chat box or the consultation notes using the browser's
+   * own speech API — no backend call, so it costs no Gemini quota.
+   */
+  function startDictation(target) {
+    if (listening) {
+      stopDictation()
+      return
+    }
+
+    const recognition = getSpeechRecognition()
+    if (!recognition) {
+      setNotice('Voice input needs Chrome, Edge or Safari.')
+      return
+    }
+
+    setNotice('')
+    dictationBaseRef.current =
+      target === 'transcript' && transcript ? `${transcript} ` : ''
+
+    recognition.lang = 'en-IN'
+    recognition.interimResults = true
+    recognition.continuous = false
+
+    recognition.onresult = (event) => {
+      let finalText = ''
+      let interim = ''
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const chunk = event.results[i][0].transcript
+        if (event.results[i].isFinal) finalText += chunk
+        else interim += chunk
+      }
+      const spoken = `${finalText}${interim}`.trim()
+      if (target === 'chat') {
+        setChatInput(spoken)
+      } else {
+        setTranscript(`${dictationBaseRef.current}${spoken}`)
+      }
+    }
+    recognition.onerror = (event) => {
+      setNotice(
+        event.error === 'not-allowed'
+          ? 'Microphone permission denied.'
+          : `Voice input error: ${event.error}`,
+      )
+      stopDictation()
+    }
+    recognition.onend = () => {
+      recognitionRef.current = null
+      setListening(null)
+    }
+
+    recognition.start()
+    recognitionRef.current = recognition
+    setListening(target)
   }
 
   function addItem() {
@@ -54,50 +161,156 @@ export default function NewPrescription() {
     setDraft((current) => ({ ...current, dosage: '' }))
   }
 
-  async function toggleRecording() {
-    if (recording) {
-      recorderRef.current?.stop()
-      return
-    }
-    setNotice('')
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream)
-      recorder.onstop = () => {
-        stream.getTracks().forEach((track) => track.stop())
-        setRecording(false)
-        setTranscript(
-          (prev) =>
-            `${prev ? `${prev}\n` : ''}[Voice note captured — transcription available via the AI pipeline]`,
-        )
-      }
-      recorder.start()
-      recorderRef.current = recorder
-      setRecording(true)
-    } catch {
-      setNotice('Microphone unavailable — please type the transcript instead.')
+  function draftFromState() {
+    return {
+      transcript: transcript.trim() || null,
+      diagnosis: null,
+      lab_test: null,
+      medicines: items.map((item) => ({
+        medicine_id: item.medicine_id,
+        name: item.name,
+        dosage: item.dosage,
+        timings: item.timings,
+      })),
     }
   }
 
-  function handleSubmit(event) {
+  function applyDraft(next) {
+    setTranscript(next.transcript ?? '')
+    setItems(
+      (next.medicines ?? []).map((medicine) => ({
+        medicine_id: medicine.medicine_id ?? null,
+        name: medicine.name ?? '',
+        dosage: medicine.dosage ?? '—',
+        timings: medicine.timings ?? '—',
+      })),
+    )
+  }
+
+  async function handleCasePaper(event) {
+    const file = event.target.files?.[0]
+    event.target.value = '' // allow re-selecting the same file
+    if (!file) return
+
+    setCasePaper(file.name)
+    setExtractNote('')
+    setExtracting(true)
+
+    try {
+      const { draft: extracted } = await extractPrescription(file)
+      const added = (extracted?.medicines ?? []).map((medicine) => {
+        const name = (medicine.name ?? '').trim()
+        const known = medicines.find((m) => m.name.toLowerCase() === name.toLowerCase())
+        const timings = [medicine.frequency, medicine.timing, medicine.duration]
+          .filter(Boolean)
+          .join(' · ')
+        return {
+          medicine_id: known?.id ?? null,
+          name: known?.name ?? (name || 'Unrecognised'),
+          dosage: medicine.dosage ?? '—',
+          timings: timings || '—',
+        }
+      })
+
+      if (added.length > 0) {
+        setItems((prev) => [...prev, ...added])
+        setExtractNote(
+          `Extracted ${added.length} medicine${added.length > 1 ? 's' : ''} — please review before submitting.`,
+        )
+      } else {
+        setExtractNote('No medicines could be read from that image.')
+      }
+
+      // Observations and general advice often sit in the margins of a case
+      // paper, not in the medicine list — pull them across too.
+      setVitals({
+        bp: extracted?.bp ?? '',
+        spo2: extracted?.spo2 ?? '',
+        advice: extracted?.advice ?? '',
+      })
+
+      if (extracted?.diagnosis) {
+        setTranscript((prev) => prev || `Diagnosis: ${extracted.diagnosis}`)
+      }
+    } catch (err) {
+      setExtractNote(`Extraction failed: ${err.message}`)
+    } finally {
+      setExtracting(false)
+    }
+  }
+
+  async function sendChat(event) {
+    event?.preventDefault?.()
+    const text = chatInput.trim()
+    if (!text || chatting) return
+
+    setChatInput('')
+    setChatMessages((prev) => [...prev, { role: 'user', text }])
+    setChatting(true)
+
+    try {
+      const history = chatMessages.map((message) => ({
+        role: message.role,
+        text: message.text,
+      }))
+      const result = await chatWithDraft({ draft: draftFromState(), message: text, history })
+      applyDraft(result.draft)
+      setChatMessages((prev) => [...prev, { role: 'assistant', text: result.reply }])
+    } catch (err) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: `Assistant unavailable: ${err.message}`, error: true },
+      ])
+    } finally {
+      setChatting(false)
+    }
+  }
+
+  async function handleSubmit(event) {
     event.preventDefault()
     if (!transcript.trim() && items.length === 0) {
       setError('Add a transcript or at least one medicine before submitting.')
       return
     }
-    addPrescription({
-      patient_id: patient.patient_id,
-      status: 'review',
-      created: new Date().toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      }),
-      lab_test: null,
-      transcript: transcript.trim(),
-      medicines: items.map((item) => ({ ...item, is_active: true })),
-    })
-    navigate('/prescriptions')
+
+    setError('')
+    setSubmitting(true)
+    try {
+      const observations = [vitals.bp && `BP ${vitals.bp}`, vitals.spo2 && `SpO2 ${vitals.spo2}`]
+        .filter(Boolean)
+        .join(', ')
+
+      await addPrescription({
+        patient_id: patient.patient_id,
+        doctor_id: doctor.doctor_id,
+        // No DB column for vitals/advice yet, so they ride along in the
+        // consultation note until the schema has a home for them.
+        transcript: [
+          transcript.trim(),
+          observations && `Vitals — ${observations}`,
+          vitals.advice.trim() && `Advice: ${vitals.advice.trim()}`,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        case_paper_url: null,
+        lab_test: null,
+        medicines: items.map((item) => ({
+          medicine_id: item.medicine_id,
+          name: item.name,
+          dosage: item.dosage,
+          timings: item.timings,
+          timing_slot:
+            timingSlots.find(
+              (slot) => slot.toLowerCase() === (item.timings ?? '').toLowerCase(),
+            ) ?? null,
+        })),
+      })
+      navigate('/prescriptions')
+    } catch (err) {
+      setError(`Could not save the prescription: ${err.message}`)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -129,37 +342,147 @@ export default function NewPrescription() {
         )}
       </div>
 
-      <SectionCard title="Consultation transcript">
-        <textarea
-          rows={5}
-          className="field resize-none"
-          placeholder="Type or record the consultation notes…"
-          value={transcript}
-          onChange={(event) => setTranscript(event.target.value)}
-        />
-        <div className="mt-3 flex flex-wrap items-center gap-3">
+      {/* Both entry points feed the same draft: photo of the case paper, or
+          chat / voice with the assistant. */}
+      <SectionCard title="Capture the prescription">
+        <p className="mb-3 text-xs text-slate-500">
+          Upload the case paper, or tell the assistant what to add — both fill the same
+          prescription below.
+        </p>
+
+        <label
+          className={`flex cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed px-4 py-6 text-sm transition-colors ${
+            extracting
+              ? 'border-brand-300 bg-brand-50/50 text-brand-700'
+              : 'border-slate-200 bg-slate-50 text-slate-500 hover:border-brand-300 hover:bg-brand-50/40'
+          }`}
+        >
+          {extracting ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : (
+            <ImagePlus size={18} />
+          )}
+          <span>
+            {extracting
+              ? 'Reading the prescription…'
+              : 'Upload or capture the case paper (image)'}
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            disabled={extracting}
+            onChange={handleCasePaper}
+          />
+        </label>
+
+        {casePaper && !extractNote && (
+          <p className="mt-2 text-xs text-slate-500">Attached: {casePaper}</p>
+        )}
+        {extractNote && (
+          <p
+            className={`mt-2 text-xs ${
+              extractNote.startsWith('Extraction failed')
+                ? 'text-rose-600'
+                : 'text-slate-600'
+            }`}
+          >
+            {extractNote}
+          </p>
+        )}
+
+        <div className="my-4 flex items-center gap-3">
+          <span className="h-px flex-1 bg-slate-200" />
+          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
+            or ask
+          </span>
+          <span className="h-px flex-1 bg-slate-200" />
+        </div>
+
+        {chatMessages.length > 0 && (
+          <ul className="mb-3 space-y-2">
+            {chatMessages.map((message, index) => (
+              <li
+                key={index}
+                className={`rounded-xl px-3.5 py-2.5 text-sm ${
+                  message.role === 'user'
+                    ? 'ml-8 bg-brand-50 text-brand-900'
+                    : message.error
+                      ? 'mr-8 bg-rose-50 text-rose-700'
+                      : 'mr-8 bg-slate-100 text-slate-700'
+                }`}
+              >
+                {message.text}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="flex gap-2">
+          <input
+            className="field"
+            placeholder='Say or type: "add Amoxicillin 500 mg TDS for 5 days"'
+            value={chatInput}
+            disabled={chatting}
+            onChange={(event) => setChatInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') sendChat(event)
+            }}
+          />
           <Button
             type="button"
-            variant={recording ? 'danger' : 'ghost'}
-            size="sm"
-            onClick={toggleRecording}
+            variant={listening === 'chat' ? 'danger' : 'ghost'}
+            onClick={() => startDictation('chat')}
+            title="Dictate your instruction"
           >
-            {recording ? (
-              <>
-                <Square size={14} /> Stop recording
-              </>
-            ) : (
-              <>
-                <Mic size={15} /> Record voice
-              </>
-            )}
+            {listening === 'chat' ? <Square size={15} /> : <Mic size={15} />}
           </Button>
-          {recording && <span className="text-xs font-medium text-rose-600">Recording…</span>}
-          {notice && <span className="text-xs text-slate-500">{notice}</span>}
+          <Button
+            type="button"
+            loading={chatting}
+            disabled={chatting || !chatInput.trim()}
+            onClick={sendChat}
+          >
+            <Send size={15} /> Send
+          </Button>
         </div>
+        <p className="mt-2 text-xs text-slate-400">
+          The assistant adds, changes or removes medicines by text or voice. Voice uses the
+          browser&apos;s microphone; the AI key must be configured.
+        </p>
       </SectionCard>
 
-      <SectionCard title="Medicines">
+      <SectionCard title="Vitals, medicines & advice">
+        {/* Vitals first, on one line, so they read as the header of the
+            prescription rather than as a form of their own. */}
+        <div className="flex flex-wrap items-center gap-5">
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">BP</span>
+            <input
+              className="field w-28"
+              placeholder="130/85"
+              value={vitals.bp}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, bp: event.target.value }))
+              }
+            />
+          </label>
+          <label className="flex items-center gap-2">
+            <span className="text-xs font-medium text-slate-500">SpO₂</span>
+            <input
+              className="field w-24"
+              placeholder="98%"
+              value={vitals.spo2}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, spo2: event.target.value }))
+              }
+            />
+          </label>
+        </div>
+
+        <div className="my-4 border-t border-slate-100" />
+
         <div className="grid gap-3 sm:grid-cols-[1.5fr_1fr_1.5fr_auto]">
           <select
             className="field"
@@ -204,7 +527,7 @@ export default function NewPrescription() {
           <ul className="mt-4 divide-y divide-slate-100">
             {items.map((item, index) => (
               <li
-                key={`${item.medicine_id}-${index}`}
+                key={`${item.medicine_id ?? item.name}-${index}`}
                 className="flex items-center justify-between py-2.5"
               >
                 <div>
@@ -225,21 +548,59 @@ export default function NewPrescription() {
             ))}
           </ul>
         )}
+
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">
+              General advice
+            </span>
+            <textarea
+              rows={3}
+              className="field resize-none"
+              placeholder="e.g. low salt diet, 30 min walk daily, review in 2 weeks"
+              value={vitals.advice}
+              onChange={(event) =>
+                setVitals((current) => ({ ...current, advice: event.target.value }))
+              }
+            />
+          </label>
+          <p className="mt-2 text-xs text-slate-400">
+            BP, SpO₂ and advice are read from the case paper on upload. Carried into the
+            consultation note; the database has no dedicated column for them yet.
+          </p>
+        </div>
       </SectionCard>
 
-      <SectionCard title="Case paper">
-        <label className="flex cursor-pointer items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 transition-colors hover:border-brand-300 hover:bg-brand-50/40">
-          <ImagePlus size={18} />
-          <span>Upload or capture the case paper (image)</span>
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(event) => setCasePaper(event.target.files?.[0]?.name ?? '')}
-          />
-        </label>
-        {casePaper && <p className="mt-2 text-xs text-slate-500">Attached: {casePaper}</p>}
+      <SectionCard title="Consultation transcript">
+        <textarea
+          rows={5}
+          className="field resize-none"
+          placeholder="Type or dictate the consultation notes…"
+          value={transcript}
+          onChange={(event) => setTranscript(event.target.value)}
+        />
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            variant={listening === 'transcript' ? 'danger' : 'ghost'}
+            size="sm"
+            onClick={() => startDictation('transcript')}
+          >
+            {listening === 'transcript' ? (
+              <>
+                <Square size={14} /> Stop dictation
+              </>
+            ) : (
+              <>
+                <Mic size={15} /> Dictate notes
+              </>
+            )}
+          </Button>
+          {listening === 'transcript' && (
+            <span className="text-xs font-medium text-rose-600">Listening…</span>
+          )}
+          {notice && <span className="text-xs text-slate-500">{notice}</span>}
+        </div>
       </SectionCard>
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
@@ -248,7 +609,9 @@ export default function NewPrescription() {
         <Button type="button" variant="ghost" as={Link} to={`/patients/${patient.patient_id}`}>
           Cancel
         </Button>
-        <Button type="submit">Submit for review</Button>
+        <Button type="submit" loading={submitting} disabled={submitting}>
+          {submitting ? 'Saving…' : 'Submit for review'}
+        </Button>
       </div>
     </form>
   )

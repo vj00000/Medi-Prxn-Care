@@ -1,22 +1,41 @@
-import { ExternalLink, FlaskConical } from 'lucide-react'
+import { useState } from 'react'
+import { CalendarDays, ExternalLink, FlaskConical, Lock, Unlock } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import SectionCard from '../../components/SectionCard'
-import { StatusBadge } from '../../components/Badge'
-import { CURRENT_PATIENT_ID, oneMgUrl } from '../patientData'
+import Badge, { StatusBadge } from '../../components/Badge'
+import Button from '../../components/Button'
+import BookAppointment from '../components/BookAppointment'
+import { CURRENT_PATIENT_ID, formatCheckup, oneMgUrl } from '../patientData'
 
 export default function Prescriptions() {
-  const { patients, prescriptions } = useApp()
-  const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
+  const { prescriptions, doctor, togglePrivacy, setCheckupDate } = useApp()
   const mine = prescriptions.filter((rx) => rx.patient_id === CURRENT_PATIENT_ID)
+  const [booking, setBooking] = useState(null)
+  const [error, setError] = useState('')
+
+  async function flipPrivacy(rx) {
+    try {
+      setError('')
+      await togglePrivacy(rx.prescription_id, !rx.is_private)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-slate-900">Prescriptions</h1>
         <p className="mt-0.5 text-sm text-slate-500">
-          Your prescribed medicines and where to buy them.
+          Your medicines, follow-ups and where to buy them.
         </p>
       </div>
+
+      {error && (
+        <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          {error}
+        </p>
+      )}
 
       {mine.length === 0 ? (
         <SectionCard>
@@ -27,7 +46,12 @@ export default function Prescriptions() {
           <SectionCard
             key={rx.prescription_id}
             title={rx.created}
-            action={<StatusBadge status={rx.status} />}
+            action={
+              <div className="flex items-center gap-2">
+                {rx.is_private && <Badge tone="neutral">Private</Badge>}
+                <StatusBadge status={rx.status} />
+              </div>
+            }
           >
             <ul className="space-y-3">
               {rx.medicines.map((medicine, index) => (
@@ -43,11 +67,10 @@ export default function Prescriptions() {
                   <a
                     href={oneMgUrl(medicine.name)}
                     target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-brand-700 transition-colors hover:bg-brand-50"
                   >
-                    Buy on Tata 1mg
-                    <ExternalLink size={13} />
+                    <ExternalLink size={13} /> Buy
                   </a>
                 </li>
               ))}
@@ -58,15 +81,52 @@ export default function Prescriptions() {
                 <FlaskConical size={14} /> Lab test: {rx.lab_test}
               </p>
             )}
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+              <button
+                type="button"
+                onClick={() => flipPrivacy(rx)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  rx.is_private
+                    ? 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+                aria-pressed={rx.is_private}
+              >
+                {rx.is_private ? <Lock size={13} /> : <Unlock size={13} />}
+                {rx.is_private ? 'Private from family' : 'Shared with family'}
+              </button>
+
+              <div className="flex items-center gap-2">
+                {rx.doctor?.name && (
+                  <span className="text-[11px] text-slate-400">{rx.doctor.name}</span>
+                )}
+                {rx.next_checkup_date && (
+                  <span className="text-[11px] font-medium text-slate-600">
+                    {formatCheckup(rx.next_checkup_date, rx.next_checkup_time)}
+                  </span>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setBooking(rx)}>
+                  <CalendarDays size={14} /> {rx.next_checkup_date ? 'Change' : 'Book'}
+                </Button>
+              </div>
+            </div>
           </SectionCard>
         ))
       )}
 
-      {patient && (
-        <p className="px-1 text-[11px] leading-relaxed text-slate-400">
-          “Buy on Tata 1mg” opens a medicine search on 1mg.com in a new tab. Always confirm with
-          your doctor or pharmacist before purchasing.
-        </p>
+      {booking && (
+        <BookAppointment
+          doctor={booking.doctor ?? doctor}
+          prescriptionId={booking.prescription_id}
+          currentIso={booking.next_checkup_date}
+          currentTime={booking.next_checkup_time}
+          onBooked={async (iso, slot) => {
+            await setCheckupDate(booking.prescription_id, iso, slot)
+            setBooking(null)
+          }}
+          onClose={() => setBooking(null)}
+        />
       )}
     </div>
   )

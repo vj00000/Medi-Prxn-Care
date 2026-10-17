@@ -10,8 +10,12 @@ function initials(name) {
 }
 
 export default function Profile() {
-  const { patients } = useApp()
+  const { patients, loading } = useApp()
   const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
+
+  if (loading) {
+    return <p className="px-1 text-sm text-slate-400">Loading your profile…</p>
+  }
 
   if (!patient) return null
 
@@ -27,9 +31,11 @@ export default function Profile() {
         <p className="text-sm text-slate-500">
           {patient.age} years · {patient.gender}
         </p>
-        <p className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
-          <Phone size={14} /> {patient.phone}
-        </p>
+        {patient.phone && (
+          <p className="mt-2 inline-flex items-center gap-2 text-xs text-slate-500">
+            <Phone size={14} /> {patient.phone}
+          </p>
+        )}
       </div>
 
       <SectionCard title="My health QR">

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, FlaskConical } from 'lucide-react'
+import { AlertTriangle, Check, FlaskConical, X } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { StatusBadge } from '../components/Badge'
 import Button from '../components/Button'
@@ -12,8 +12,9 @@ const FILTERS = [
 ]
 
 export default function Prescriptions() {
-  const { prescriptions, getPatient, approvePrescription } = useApp()
+  const { prescriptions, getPatient, approvePrescription, warnings, clearWarnings } = useApp()
   const [filter, setFilter] = useState('all')
+  const [error, setError] = useState('')
 
   const list = useMemo(
     () => (filter === 'all' ? prescriptions : prescriptions.filter((rx) => rx.status === filter)),
@@ -22,6 +23,34 @@ export default function Prescriptions() {
 
   return (
     <div className="space-y-6">
+      {warnings.length > 0 && (
+        <div className="flex items-start gap-3 rounded-2xl border border-rose-200 bg-rose-50 p-4">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-rose-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-rose-800">Safety check</p>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-sm text-rose-700">
+              {warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+          <button
+            type="button"
+            onClick={clearWarnings}
+            className="rounded-lg p-1 text-rose-500 transition-colors hover:bg-rose-100"
+            aria-label="Dismiss safety warnings"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+          {error}
+        </div>
+      )}
+
       <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1">
         {FILTERS.map((option) => (
           <button
@@ -55,7 +84,7 @@ export default function Prescriptions() {
                       to={`/patients/${rx.patient_id}`}
                       className="text-sm font-semibold text-slate-900 hover:text-brand-700"
                     >
-                      {patient?.name ?? 'Unknown patient'}
+                      {patient?.name ?? `Patient #${rx.patient_id}`}
                     </Link>
                     <p className="text-xs text-slate-500">{rx.created}</p>
                   </div>
@@ -89,7 +118,14 @@ export default function Prescriptions() {
                   <div className="mt-4 flex justify-end">
                     <Button
                       size="sm"
-                      onClick={() => approvePrescription(rx.prescription_id)}
+                      onClick={async () => {
+                        try {
+                          await approvePrescription(rx.prescription_id)
+                          setError('')
+                        } catch (err) {
+                          setError(`Could not approve the prescription: ${err.message}`)
+                        }
+                      }}
                     >
                       <Check size={15} /> Approve
                     </Button>

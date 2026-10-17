@@ -82,6 +82,7 @@ def seed() -> None:
                 gender="male",
                 allergies="Penicillin, Sulfa drugs",
                 qr_token="QR-VIKRAM-0001",
+                phone="+91-90000-11111",
             ),
             Patient(
                 name="Meera Nair",
@@ -89,6 +90,7 @@ def seed() -> None:
                 gender="female",
                 allergies="None reported",
                 qr_token="QR-MEERA-0002",
+                phone="+91-90000-22222",
             ),
         ]
         medicines = [
@@ -132,16 +134,29 @@ def seed() -> None:
         prescription = Prescription(
             transcript="Metformin 500mg BD after meals; Atorvastatin 10mg at night",
             case_paper_url="https://reports.example.com/cases/0001.pdf",
+            created_on=date.today(),
             status=PrescriptionStatus.review,
             lab_test=lab_test,
         )
         db.add(prescription)
         db.flush()
 
-        db.add(
-            PatientDoctorVisit(
-                patient=patients[0], doctor=doctors[0], prescription=prescription
-            )
+        db.add_all(
+            [
+                PatientDoctorVisit(
+                    patient=patients[0],
+                    doctor=doctors[0],
+                    prescription=prescription,
+                    visit_date=date.today(),
+                ),
+                # No prescription attached, but a visit on record, so both
+                # seeded patients have a "last visit" to show.
+                PatientDoctorVisit(
+                    patient=patients[1],
+                    doctor=doctors[1],
+                    visit_date=date.today() - timedelta(days=1),
+                ),
+            ]
         )
 
         db.add_all(
@@ -193,6 +208,11 @@ def seed() -> None:
         db.commit()
         print("Seed complete.\n")
         print_counts(db)
+
+        # Family groupings and follow-up dates build on the base seed.
+        from app.seed_family import seed as seed_family
+
+        seed_family()
     finally:
         db.close()
 

@@ -1,12 +1,16 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { ClipboardList, HeartPulse, History, User } from 'lucide-react'
+import { ClipboardList, HeartPulse, History, ShoppingCart, User } from 'lucide-react'
 import { useApp } from '../store/AppStore'
 import { CURRENT_PATIENT_ID } from './patientData'
+import { CartProvider } from './cartContext'
+import { DoseProvider } from './doseContext'
+import DoseAlarm from './components/DoseAlarm'
 
 const TABS = [
   { to: '/patient', label: 'Home', icon: HeartPulse, end: true },
   { to: '/patient/timeline', label: 'Timeline', icon: History },
   { to: '/patient/prescriptions', label: 'Meds', icon: ClipboardList },
+  { to: '/patient/cart', label: 'Cart', icon: ShoppingCart },
   { to: '/patient/profile', label: 'Profile', icon: User },
 ]
 
@@ -15,6 +19,16 @@ function initials(name) {
 }
 
 export default function PatientLayout() {
+  return (
+    <CartProvider>
+      <DoseProvider>
+        <PatientShell />
+      </DoseProvider>
+    </CartProvider>
+  )
+}
+
+function PatientShell() {
   const { patients } = useApp()
   const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
 
@@ -62,6 +76,8 @@ export default function PatientLayout() {
           ))}
         </div>
       </nav>
+
+      <DoseAlarm />
     </div>
   )
 }

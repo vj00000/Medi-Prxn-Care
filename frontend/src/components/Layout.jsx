@@ -19,6 +19,8 @@ function titleFor(pathname) {
 }
 
 function initialsOf(name) {
+  // `doctor` is null until the initial fetch resolves.
+  if (!name) return '…'
   return name
     .replace(/^Dr\.\s*/i, '')
     .split(' ')
@@ -31,7 +33,7 @@ function initialsOf(name) {
 export default function Layout() {
   const { doctor } = useApp()
   const { pathname } = useLocation()
-  const initials = initialsOf(doctor.name)
+  const initials = initialsOf(doctor?.name)
 
   const navClass = ({ isActive }) =>
     `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
@@ -68,8 +70,8 @@ export default function Layout() {
               {initials}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-900">{doctor.name}</p>
-              <p className="truncate text-xs text-slate-500">{doctor.specialization}</p>
+              <p className="truncate text-sm font-semibold text-slate-900">{doctor?.name}</p>
+              <p className="truncate text-xs text-slate-500">{doctor?.specialization}</p>
             </div>
           </div>
         </div>
@@ -82,7 +84,7 @@ export default function Layout() {
               {titleFor(pathname)}
             </h1>
             <div className="flex items-center gap-2 text-sm text-slate-500">
-              <span className="hidden sm:inline">{doctor.name}</span>
+              <span className="hidden sm:inline">{doctor?.name}</span>
               <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-xs font-semibold text-brand-800">
                 {initials}
               </span>
