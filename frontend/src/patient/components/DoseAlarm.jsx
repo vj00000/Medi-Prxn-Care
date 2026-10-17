@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import { AlarmClock, Check, Clock } from 'lucide-react'
+import { AlarmClock, CalendarClock, Check, Clock } from 'lucide-react'
 import { useDoses } from '../doseContext'
-import { slotHour } from '../patientData'
+import { formatLongDate, slotHour } from '../patientData'
 import Button from '../../components/Button'
 
 const BEEP_INTERVAL_MS = 1500
@@ -55,16 +55,46 @@ function chirp() {
 }
 
 export default function DoseAlarm() {
-  const { ringing, markTaken, snooze, dismissAlarm } = useDoses()
+  const { ringing, markTaken, snooze, dismissAlarm, checkup, dismissCheckup } = useDoses()
 
   useEffect(() => {
-    if (!ringing) return undefined
+    if (!ringing && !checkup) return undefined
     chirp() // sound immediately, then repeat until dismissed
     const id = setInterval(chirp, BEEP_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [ringing])
+  }, [ringing, checkup])
 
-  if (!ringing) return null
+  if (!ringing && !checkup) return null
+
+  // A follow-up reminder outranks nothing — a dose alarm still takes priority.
+  if (!ringing && checkup) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 p-4 sm:items-center">
+        <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-xl">
+          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+            <CalendarClock size={26} className="animate-pulse" />
+          </span>
+
+          <p className="mt-4 text-xs font-semibold uppercase tracking-wider text-amber-700">
+            Follow-up due today
+          </p>
+          <p className="mt-1 text-lg font-bold text-slate-900">
+            {formatLongDate(checkup.next_checkup_date)}
+          </p>
+          <p className="mt-1 text-sm text-slate-500">
+            Time for your checkup — book a slot with your doctor.
+          </p>
+
+          <Button
+            className="mt-6 w-full"
+            onClick={() => dismissCheckup(checkup.next_checkup_date)}
+          >
+            <Check size={15} /> Got it
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   const hasTime = slotHour(ringing.timing_slot) !== undefined
 

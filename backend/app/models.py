@@ -43,10 +43,23 @@ class Doctor(Base):
     specialization: Mapped[Optional[str]] = mapped_column(String(100))
     contact_number: Mapped[Optional[str]] = mapped_column(String(20))
     gender: Mapped[Optional[str]] = mapped_column(String(20))
+    calendly_url: Mapped[Optional[str]] = mapped_column(String(255))
 
     visits: Mapped[List["PatientDoctorVisit"]] = relationship(
         back_populates="doctor", cascade="all, delete-orphan"
     )
+
+
+# --------------------------------------------------------------------------- #
+# families — households whose members share the patient portal
+# --------------------------------------------------------------------------- #
+class Family(Base):
+    __tablename__ = "families"
+
+    family_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    members: Mapped[List["Patient"]] = relationship(back_populates="family")
 
 
 # --------------------------------------------------------------------------- #
@@ -62,6 +75,13 @@ class Patient(Base):
     allergies: Mapped[Optional[str]] = mapped_column(Text)
     qr_token: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(20))
+    family_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("families.family_id", ondelete="SET NULL")
+    )
+    # Role within the family: self / father / mother / other.
+    relation: Mapped[Optional[str]] = mapped_column(String(20))
+
+    family: Mapped[Optional["Family"]] = relationship(back_populates="members")
 
     disease_links: Mapped[List["PatientDisease"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan"
@@ -183,6 +203,10 @@ class Prescription(Base):
     )
     # When the prescription was written — the table's only timestamp.
     created_on: Mapped[Optional[date]] = mapped_column(Date)
+    # Whether family members other than the patient can see this prescription.
+    is_private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Follow-up appointment the patient should attend.
+    next_checkup_date: Mapped[Optional[date]] = mapped_column(Date)
     transcript: Mapped[Optional[str]] = mapped_column(Text)
     case_paper_url: Mapped[Optional[str]] = mapped_column(String(500))
     status: Mapped[PrescriptionStatus] = mapped_column(

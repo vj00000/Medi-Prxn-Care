@@ -42,6 +42,8 @@ export const api = {
   /** The prescribing doctor — the first row of `doctors`. */
   getDoctor: async () => (await get('/doctors'))[0] ?? null,
   listPatients: () => get('/patients'),
+  /** The viewer plus everyone else in their household (privacy applied). */
+  getFamily: (patientId) => get(`/patients/${patientId}/family`),
   listMedicines: () => get('/medicines'),
   listDiseases: () => get('/diseases'),
   listPrescriptions: () => get('/prescriptions'),
@@ -85,3 +87,25 @@ export const createPrescription = (payload) => post('/prescriptions', payload)
 
 /** Move a prescription to `approved` in the database. */
 export const approvePrescription = (id) => post(`/prescriptions/${id}/approve`)
+
+/** Add a family member (father / mother / other) to a household. */
+export const addFamilyMember = (payload) => post('/patients/family-members', payload)
+
+/** Hide or reveal a prescription for the rest of the family. */
+export async function setPrescriptionPrivacy(id, isPrivate) {
+  const response = await fetch(`${BASE}/prescriptions/${id}/privacy`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_private: isPrivate }),
+  })
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
+/** Record the follow-up date the patient picked in Calendly. */
+export const setCheckup = (id, isoDate) =>
+  post(`/prescriptions/${id}/checkup`, { next_checkup_date: isoDate })
+
+/** Patient-side assistant: "book my checkup in two weeks". */
+export const patientChat = (patientId, message) =>
+  post('/ai/patient-chat', { patient_id: patientId, message })

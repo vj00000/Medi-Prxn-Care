@@ -1,12 +1,22 @@
 """AI endpoints: image extraction and chat-driven drafting."""
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from google.api_core import exceptions as google_exceptions
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.ai.chat import chat_with_draft
 from app.ai.client import AIBadResponse, AINotConfigured
 from app.ai.extract import extract_prescription_from_image
-from app.schemas import ChatRequest, ChatResponse
+from app.ai.patient_chat import parse_checkup_request
+from app.database import get_db
+from app.models import Patient, PatientDoctorVisit, Prescription
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    PatientChatRequest,
+    PatientChatResponse,
+)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -68,3 +78,47 @@ async def chat(payload: ChatRequest):
         raise _as_http_error(exc)
 
     return ChatResponse(draft=draft, reply=reply, actions=actions)
+
+
+@router.post("/patient-chat", response_model=PatientChatResponse)
+def patient_chat(payload: PatientChatRequest, db: Session = Depends(get_db)):
+    """Let a patient schedule a follow-up in plain language."""
+    patient = db.get(Patient, payload.patient_id)
+    if patient is None:
+        raise HTTPException(
+            status_code=404, detail=f"Patient {payload.patient_id} not found"
+        )
+
+    target = parse_checkup_request(payload.message)
+    if target is None:
+        return PatientChatResponse(
+            reply=(
+                "I can help you book a follow-up. Try: "
+                "\u201cbook my checkup in two weeks\u201d."
+            )
+        )
+
+    rx = db.scalar(
+        select(Prescription)
+        .join(
+            PatientDoctorVisit,
+            PatientDoctorVisit.prescription_id == Prescription.prescription_id,
+        )
+        .where(PatientDoctorVisit.patient_id == payload.patient_id)
+        .order_by(Prescription.prescription_id.desc())
+        .limit(1)
+    )
+    if rx is None:
+        return PatientChatResponse(
+            reply="You have no prescription on record yet, so there is nothing to follow up."
+        )
+
+    rx.next_checkup_date = target
+    db.commit()
+    db.refresh(rx)
+
+    return PatientChatResponse(
+        reply=f"Done - your follow-up is set for {target.strftime('%d %b %Y')}.",
+        next_checkup_date=target,
+        prescription_id=rx.prescription_id,
+    )

@@ -44,6 +44,10 @@ class PrescriptionOut(BaseModel):
     # `prescriptions` has no timestamp column, so this is derived from the
     # earliest start date among the prescription's medication schedules.
     created: date | None = None
+    # True => hidden from other members of the patient's family.
+    is_private: bool = False
+    # Follow-up appointment the patient should attend.
+    next_checkup_date: date | None = None
     medicines: list[MedicineOut] = Field(default_factory=list)
     # Non-blocking patient-safety notes (e.g. recorded-allergy conflicts).
     warnings: list[str] = Field(default_factory=list)
@@ -60,6 +64,7 @@ class DoctorOut(BaseModel):
     specialization: str | None = None
     contact_number: str | None = None
     gender: str | None = None
+    calendly_url: str | None = None
 
 
 class DiseaseOut(BaseModel):
@@ -98,6 +103,8 @@ class ScheduleOut(BaseModel):
     is_expired: bool = False
     start_date: date | None = None
     end_date: date | None = None
+    # Used client-side to flag "reorder soon" before the supply runs out.
+    prescription_id: int | None = None
 
 
 class PatientOut(BaseModel):
@@ -107,6 +114,9 @@ class PatientOut(BaseModel):
     gender: str | None = None
     phone: str | None = None
     qr_token: str | None = None
+    family_id: int | None = None
+    # Role within the family: self / father / mother / other.
+    relation: str | None = None
     allergies: list[str] = Field(default_factory=list)
     diseases: list[DiseaseOut] = Field(default_factory=list)
     # camelCase because that is the name the doctor and patient components read.
@@ -114,6 +124,38 @@ class PatientOut(BaseModel):
     schedules: list[ScheduleOut] = Field(default_factory=list)
     # Newest `visit_date` among the patient's visits.
     lastVisit: date | None = None
+
+
+class FamilyMemberCreate(BaseModel):
+    family_id: int
+    name: str
+    relation: str  # father | mother | other
+    age: int | None = None
+    gender: str | None = None
+    phone: str | None = None
+    allergies: str | None = None
+
+
+class PrivacyUpdate(BaseModel):
+    is_private: bool
+
+
+class CheckupUpdate(BaseModel):
+    next_checkup_date: date
+
+
+# --------------------------------------------------------------------------- #
+# Patient-side assistant
+# --------------------------------------------------------------------------- #
+class PatientChatRequest(BaseModel):
+    patient_id: int
+    message: str
+
+
+class PatientChatResponse(BaseModel):
+    reply: str
+    next_checkup_date: date | None = None
+    prescription_id: int | None = None
 
 
 # --------------------------------------------------------------------------- #

@@ -1,29 +1,41 @@
-"""Add columns introduced after the first schema revision, and backfill them.
+"""Add columns and tables introduced after the first schema revision.
 
 ``Base.metadata.create_all`` only creates missing *tables* — it never adds a
-missing *column* to an existing one — so a database created before these fields
-existed needs an explicit migration. Every statement is idempotent, so running
-this more than once is safe:
+missing *column* to an existing one — so a database created before these
+fields existed needs an explicit migration. Every statement is idempotent, so
+running this more than once is safe:
 
     docker compose exec -T api python -m app.migrate_columns
 
-The three columns added here:
-
-* ``patients.phone``               — contact number, shown in the portals.
-* ``patient_doctor_visit.visit_date`` — when the appointment happened.
-* ``prescriptions.created_on``     — when the prescription was written.
+Run this before ``python -m app.seed_family``.
 """
-
-from datetime import timedelta
 
 from sqlalchemy import text
 
 from app.database import SessionLocal
 
+# Created before the ALTERs below, which reference it.
+CREATE_TABLES = [
+    """
+    CREATE TABLE IF NOT EXISTS families (
+        family_id SERIAL PRIMARY KEY,
+        name      VARCHAR(100) NOT NULL
+    )
+    """,
+]
+
 ADD_COLUMNS = [
+    # First revision: contact number, visit dates, prescription dates.
     "ALTER TABLE patients ADD COLUMN IF NOT EXISTS phone VARCHAR(20)",
     "ALTER TABLE patient_doctor_visit ADD COLUMN IF NOT EXISTS visit_date DATE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS created_on DATE",
+    # Second revision: families, per-prescription privacy, checkups, Calendly.
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS family_id INTEGER "
+    "REFERENCES families(family_id) ON DELETE SET NULL",
+    "ALTER TABLE patients ADD COLUMN IF NOT EXISTS relation VARCHAR(20)",
+    "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_date DATE",
+    "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS calendly_url VARCHAR(255)",
 ]
 
 # A prescription's date is recoverable: its medication schedules were created
@@ -67,6 +79,11 @@ DEMO_PHONES = {
 def migrate() -> None:
     db = SessionLocal()
     try:
+        for statement in CREATE_TABLES:
+            db.execute(text(statement))
+        db.commit()
+        print("Tables present.")
+
         for statement in ADD_COLUMNS:
             db.execute(text(statement))
         db.commit()
@@ -94,16 +111,21 @@ def migrate() -> None:
 
         rows = db.execute(
             text(
-                "SELECT p.patient_id, p.name, p.phone, MAX(v.visit_date) AS last_visit "
+                "SELECT p.patient_id, p.name, p.phone, p.relation, p.family_id, "
+                "       MAX(v.visit_date) AS last_visit "
                 "FROM patients p "
                 "LEFT JOIN patient_doctor_visit v ON v.patient_id = p.patient_id "
-                "GROUP BY p.patient_id, p.name, p.phone "
+                "GROUP BY p.patient_id, p.name, p.phone, p.relation, p.family_id "
                 "ORDER BY p.patient_id"
             )
         ).all()
         print("\nResult:")
-        for patient_id, name, phone, last_visit in rows:
-            print(f"  #{patient_id} {name:<12} phone={phone or '-':<18} last_visit={last_visit or '-'}")
+        for patient_id, name, phone, relation, family_id, last_visit in rows:
+            print(
+                f"  #{patient_id} {name:<14} relation={relation or '-':<8} "
+                f"family={family_id or '-':<4} phone={phone or '-':<18} "
+                f"last_visit={last_visit or '-'}"
+            )
     finally:
         db.close()
 

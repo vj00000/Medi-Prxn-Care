@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react'
 import { useApp } from '../store/AppStore'
-import { CURRENT_PATIENT_ID, dueDoses } from './patientData'
+import { CURRENT_PATIENT_ID, dueDoses, todayIso } from './patientData'
 
 const DoseContext = createContext(null)
 
@@ -28,23 +28,53 @@ function loadTaken() {
   }
 }
 
+const DISMISSED_CHECKUPS_KEY = 'smartrx:checkup-dismissed'
+
+/** Keyed by checkup date, so dismissing today does not silence a later one. */
+function loadDismissedCheckups() {
+  try {
+    return JSON.parse(localStorage.getItem(DISMISSED_CHECKUPS_KEY) ?? '{}')
+  } catch {
+    return {}
+  }
+}
+
 /**
  * Owns everything the alarm needs: which doses are taken, and which dose (if
  * any) is currently ringing. Kept above the patient routes so the alarm
  * survives tab changes and Home can share the same "taken" state.
  */
 export function DoseProvider({ children }) {
-  const { patients } = useApp()
+  const { patients, prescriptions } = useApp()
   const schedules =
     patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)?.schedules ?? []
 
   const [taken, setTaken] = useState(loadTaken)
   const [ringing, setRinging] = useState(null)
+  const [dismissedCheckups, setDismissedCheckups] = useState(loadDismissedCheckups)
   const snoozedUntil = useRef({})
 
   useEffect(() => {
     localStorage.setItem(storageKey(), JSON.stringify(taken))
   }, [taken])
+
+  useEffect(() => {
+    localStorage.setItem(DISMISSED_CHECKUPS_KEY, JSON.stringify(dismissedCheckups))
+  }, [dismissedCheckups])
+
+  const dismissCheckup = useCallback((iso) => {
+    setDismissedCheckups((prev) => ({ ...prev, [iso]: true }))
+  }, [])
+
+  /** The patient's follow-up falls due today and has not been dismissed. */
+  const checkup = useMemo(() => {
+    const today = todayIso()
+    const due = prescriptions.find(
+      (rx) =>
+        rx.patient_id === CURRENT_PATIENT_ID && rx.next_checkup_date === today,
+    )
+    return due && !dismissedCheckups[today] ? due : null
+  }, [prescriptions, dismissedCheckups])
 
   const markTaken = useCallback((id) => {
     setTaken((prev) => ({ ...prev, [id]: true }))
@@ -94,8 +124,28 @@ export function DoseProvider({ children }) {
   }, [schedules, taken])
 
   const value = useMemo(
-    () => ({ taken, markTaken, untake, ringing, dismissAlarm, snooze, ringNow }),
-    [taken, markTaken, untake, ringing, dismissAlarm, snooze, ringNow],
+    () => ({
+      taken,
+      markTaken,
+      untake,
+      ringing,
+      dismissAlarm,
+      snooze,
+      ringNow,
+      checkup,
+      dismissCheckup,
+    }),
+    [
+      taken,
+      markTaken,
+      untake,
+      ringing,
+      dismissAlarm,
+      snooze,
+      ringNow,
+      checkup,
+      dismissCheckup,
+    ],
   )
 
   return <DoseContext.Provider value={value}>{children}</DoseContext.Provider>

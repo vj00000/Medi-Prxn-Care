@@ -1,5 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { api, approvePrescription, createPrescription } from '../lib/api'
+import {
+  addFamilyMember,
+  api,
+  approvePrescription,
+  createPrescription,
+  patientChat,
+  setCheckup,
+  setPrescriptionPrivacy,
+} from '../lib/api'
+import { CURRENT_PATIENT_ID } from '../patient/patientData'
 
 const AppContext = createContext(null)
 
@@ -28,6 +37,7 @@ function presentPatient(patient) {
 export function AppProvider({ children }) {
   const [doctor, setDoctor] = useState(null)
   const [patients, setPatients] = useState([])
+  const [family, setFamily] = useState([])
   const [medicines, setMedicines] = useState([])
   const [diseases, setDiseases] = useState([])
   const [prescriptions, setPrescriptions] = useState([])
@@ -35,21 +45,30 @@ export function AppProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
+  const refreshFamily = useCallback(async () => {
+    const rows = await api.getFamily(CURRENT_PATIENT_ID)
+    setFamily(rows.map(presentPatient))
+    return rows
+  }, [])
+
   useEffect(() => {
     let cancelled = false
 
     async function load() {
       try {
-        const [doctorRow, patientRows, medicineRows, diseaseRows, rxRows] = await Promise.all([
-          api.getDoctor(),
-          api.listPatients(),
-          api.listMedicines(),
-          api.listDiseases(),
-          api.listPrescriptions(),
-        ])
+        const [doctorRow, patientRows, familyRows, medicineRows, diseaseRows, rxRows] =
+          await Promise.all([
+            api.getDoctor(),
+            api.listPatients(),
+            api.getFamily(CURRENT_PATIENT_ID),
+            api.listMedicines(),
+            api.listDiseases(),
+            api.listPrescriptions(),
+          ])
         if (cancelled) return
         setDoctor(doctorRow)
         setPatients(patientRows.map(presentPatient))
+        setFamily(familyRows.map(presentPatient))
         setMedicines(medicineRows)
         setDiseases(diseaseRows)
         setPrescriptions(rxRows.map(present))
@@ -67,18 +86,71 @@ export function AppProvider({ children }) {
     }
   }, [])
 
-  const approve = useCallback(async (id) => {
-    const saved = await approvePrescription(id)
+  const applyPrescription = useCallback((saved) => {
     setPrescriptions((prev) =>
-      prev.map((rx) => (rx.prescription_id === id ? present(saved) : rx)),
+      prev.map((rx) =>
+        rx.prescription_id === saved.prescription_id ? present(saved) : rx,
+      ),
     )
-    return saved
   }, [])
+
+  const approve = useCallback(
+    async (id) => {
+      const saved = await approvePrescription(id)
+      applyPrescription(saved)
+      return saved
+    },
+    [applyPrescription],
+  )
+
+  /** Hide or reveal one of my prescriptions for the rest of the family. */
+  const togglePrivacy = useCallback(
+    async (id, isPrivate) => {
+      const saved = await setPrescriptionPrivacy(id, isPrivate)
+      applyPrescription(saved)
+      await refreshFamily()
+      return saved
+    },
+    [applyPrescription, refreshFamily],
+  )
+
+  /** Record the follow-up date picked in Calendly. */
+  const setCheckupDate = useCallback(
+    async (id, isoDate) => {
+      const saved = await setCheckup(id, isoDate)
+      applyPrescription(saved)
+      await refreshFamily()
+      return saved
+    },
+    [applyPrescription, refreshFamily],
+  )
+
+  const addMember = useCallback(
+    async (payload) => {
+      const member = await addFamilyMember(payload)
+      await refreshFamily()
+      return member
+    },
+    [refreshFamily],
+  )
+
+  /** Ask the patient-side assistant to (for example) book a follow-up. */
+  const consultAssistant = useCallback(
+    async (message) => {
+      const result = await patientChat(CURRENT_PATIENT_ID, message)
+      const rows = await api.listPrescriptions()
+      setPrescriptions(rows.map(present))
+      await refreshFamily()
+      return result
+    },
+    [refreshFamily],
+  )
 
   const value = useMemo(
     () => ({
       doctor,
       patients,
+      family,
       medicines,
       diseases,
       timingSlots: api.listTimingSlots(),
@@ -97,12 +169,34 @@ export function AppProvider({ children }) {
         const record = present(saved)
         setPrescriptions((prev) => [record, ...prev])
         setWarnings(saved.warnings ?? [])
+        await refreshFamily()
         return record
       },
 
       approvePrescription: approve,
+      togglePrivacy,
+      setCheckupDate,
+      addMember,
+      refreshFamily,
+      consultAssistant,
     }),
-    [doctor, patients, medicines, diseases, prescriptions, warnings, loading, error, approve],
+    [
+      doctor,
+      patients,
+      family,
+      medicines,
+      diseases,
+      prescriptions,
+      warnings,
+      loading,
+      error,
+      approve,
+      togglePrivacy,
+      setCheckupDate,
+      addMember,
+      refreshFamily,
+      consultAssistant,
+    ],
   )
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

@@ -7,6 +7,48 @@
 
 export const CURRENT_PATIENT_ID = 1
 
+/** How many days before a supply runs out a medicine is flagged to reorder. */
+export const REORDER_WINDOW_DAYS = 5
+
+/**
+ * Whether a schedule is running out.
+ *
+ * Returns null when the medicine is not near its end date, otherwise
+ * { level: 'now' | 'soon', days } so the UI can colour the badge.
+ */
+export function reorderStatus(schedule, now = new Date()) {
+  if (!schedule?.end_date || schedule.is_expired) return null
+
+  const end = new Date(`${schedule.end_date}T00:00:00`)
+  if (Number.isNaN(end.getTime())) return null
+
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((end - midnight) / 86_400_000)
+
+  if (days < 0) return { level: 'now', days }
+  if (days <= REORDER_WINDOW_DAYS) return { level: 'soon', days }
+  return null
+}
+
+/** Today as an ISO date, matching what the API returns for checkup dates. */
+export function todayIso(now = new Date()) {
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
+/** ISO date -> '17 Oct 2026', for display. */
+export function formatLongDate(iso) {
+  if (!iso) return null
+  const parsed = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return iso
+  return parsed.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
 /** Builds a Tata 1mg medicine search link (no partnership implied). */
 export function oneMgUrl(medicineName) {
   return `https://www.1mg.com/search/all?name=${encodeURIComponent(medicineName)}`

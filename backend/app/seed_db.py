@@ -208,6 +208,11 @@ def seed() -> None:
         db.commit()
         print("Seed complete.\n")
         print_counts(db)
+
+        # Family groupings and follow-up dates build on the base seed.
+        from app.seed_family import seed as seed_family
+
+        seed_family()
     finally:
         db.close()
 
