@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.availability import available_slots
@@ -226,7 +226,7 @@ def set_privacy(
 def set_checkup(
     prescription_id: int, payload: CheckupUpdate, db: Session = Depends(get_db)
 ):
-    """Record the follow-up slot the patient picked in Calendly or by hand."""
+    """Record the follow-up slot the patient picked from the doctor's schedule."""
     rx = db.get(Prescription, prescription_id)
     if rx is None:
         raise HTTPException(
@@ -252,15 +252,29 @@ def set_checkup(
             )
 
         chosen = payload.next_checkup_time.replace(second=0, microsecond=0)
+        doctor = db.get(Doctor, visit.doctor_id)
+        if doctor is None:
+            raise HTTPException(status_code=409, detail="This prescription has no doctor.")
+
+        # Serialize bookings per doctor per day. Without this, two requests can
+        # both read the slot as free before either commits, and both would be
+        # accepted. The lock is held until this transaction commits below.
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(:doctor_id, :day_key)"),
+            {
+                "doctor_id": doctor.doctor_id,
+                "day_key": payload.next_checkup_date.toordinal(),
+            },
+        )
+
         slots = available_slots(
             db,
-            visit.doctor_id,
+            doctor.doctor_id,
             payload.next_checkup_date,
             exclude_prescription_id=rx.prescription_id,
         )
         if chosen not in slots:
-            doctor = db.get(Doctor, visit.doctor_id)
-            name = doctor.name if doctor else "This doctor"
+            name = doctor.name or "This doctor"
             when = payload.next_checkup_date.strftime("%d %b %Y")
             if not slots:
                 detail = f"{name} has no free slots on {when}."

@@ -114,7 +114,7 @@ export function AppProvider({ children }) {
     [applyPrescription, refreshFamily],
   )
 
-  /** Record the follow-up slot picked in Calendly, or chosen by hand. */
+  /** Record the follow-up slot the patient picked. */
   const setCheckupDate = useCallback(
     async (id, isoDate, isoTime = null) => {
       const saved = await setCheckup(id, isoDate, isoTime)

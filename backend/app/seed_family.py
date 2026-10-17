@@ -6,14 +6,14 @@ base seed (doctors, patients) already exists.
     docker compose exec -T api python -m app.seed_family
 """
 
-from datetime import date, time, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
+from app.availability import DEFAULT_WEEKLY_WINDOWS, ensure_default_windows
 from app.database import SessionLocal
 from app.models import (
     Doctor,
-    DoctorAvailability,
     Family,
     Medicine,
     MedicationSchedule,
@@ -25,18 +25,6 @@ from app.models import (
 )
 
 FAMILY_NAME = "Rao Family"
-# Placeholder for the primary doctor. Each doctor can point at their own
-# calendar via PATCH /doctors/{id}. An event-type URL (.../<owner>/<event>)
-# embeds reliably; a bare profile URL only shows the list of event types.
-CALENDLY_URL = "https://calendly.com/yogsamarpanam-app"
-
-# Mon-Fri two sessions, Saturday mornings only: Sunday stays closed, so a
-# patient cannot book a weekend slot that does not exist.
-WEEKLY_WINDOWS = [
-    *[(weekday, time(9, 0), time(13, 0)) for weekday in range(5)],
-    *[(weekday, time(15, 0), time(18, 0)) for weekday in range(5)],
-    (5, time(9, 0), time(12, 0)),
-]
 
 
 def _medicine(db, name: str, brand: str | None = None) -> Medicine:
@@ -146,35 +134,22 @@ def seed() -> None:
     today = date.today()
     db = SessionLocal()
     try:
-        doctor = db.scalar(select(Doctor).order_by(Doctor.doctor_id))
-        if doctor is None:
+        doctors = db.scalars(select(Doctor).order_by(Doctor.doctor_id)).all()
+        if not doctors:
             print("No doctors found - run `python -m app.seed_db` first.")
             return
 
-        # Only fill a link the doctor has not configured. Overwriting here would
-        # stomp a per-doctor calendar every time the seed runs.
-        if not doctor.calendly_url:
-            doctor.calendly_url = CALENDLY_URL
-            print(f"  doctor calendly_url -> {CALENDLY_URL}")
-
-        # Weekly windows, so the patient picks from real slots rather than
-        # inventing a time.
-        if not db.scalar(
-            select(DoctorAvailability).where(
-                DoctorAvailability.doctor_id == doctor.doctor_id
-            )
-        ):
-            for weekday, start, end in WEEKLY_WINDOWS:
-                db.add(
-                    DoctorAvailability(
-                        doctor_id=doctor.doctor_id,
-                        weekday=weekday,
-                        start_time=start,
-                        end_time=end,
-                    )
+        # Every doctor needs bookable windows, not just the first one: a doctor
+        # with none cannot be booked at all. Existing schedules are left alone.
+        for each in doctors:
+            if ensure_default_windows(db, each):
+                print(
+                    f"  {each.name}: default availability -> "
+                    f"{len(DEFAULT_WEEKLY_WINDOWS)} window(s)"
                 )
-            db.flush()
-            print(f"  doctor availability -> {len(WEEKLY_WINDOWS)} window(s)")
+
+        # The remaining steps create prescriptions against the primary doctor.
+        doctor = doctors[0]
 
         family = db.scalar(select(Family).where(Family.name == FAMILY_NAME))
         if family is None:

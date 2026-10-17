@@ -10,9 +10,11 @@ running this more than once is safe:
 Run this before ``python -m app.seed_family``.
 """
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
+from app.availability import ensure_default_windows
 from app.database import SessionLocal
+from app.models import Doctor, MedicationSchedule, MedicineStock
 
 # Created before the ALTERs below, which reference it.
 CREATE_TABLES = [
@@ -32,6 +34,29 @@ CREATE_TABLES = [
         end_time        TIME NOT NULL
     )
     """,
+    # One row per dose actually swallowed. The unique pair is what makes
+    # "mark taken only once for that time" hold at the database level.
+    """
+    CREATE TABLE IF NOT EXISTS dose_logs (
+        id          SERIAL PRIMARY KEY,
+        schedule_id INTEGER NOT NULL REFERENCES medication_schedules(id) ON DELETE CASCADE,
+        patient_id  INTEGER NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+        dose_date   DATE NOT NULL,
+        taken_at    TIMESTAMP NOT NULL,
+        CONSTRAINT uq_dose_log_per_slot UNIQUE (schedule_id, dose_date)
+    )
+    """,
+    # Units left per patient per medicine, feeding the low-stock warning.
+    """
+    CREATE TABLE IF NOT EXISTS medicine_stock (
+        id                  SERIAL PRIMARY KEY,
+        patient_id          INTEGER NOT NULL REFERENCES patients(patient_id) ON DELETE CASCADE,
+        medicine_name       VARCHAR(150) NOT NULL,
+        units_remaining     INTEGER NOT NULL DEFAULT 0,
+        low_stock_threshold INTEGER NOT NULL DEFAULT 7,
+        CONSTRAINT uq_stock_per_medicine UNIQUE (patient_id, medicine_name)
+    )
+    """,
 ]
 
 ADD_COLUMNS = [
@@ -39,14 +64,13 @@ ADD_COLUMNS = [
     "ALTER TABLE patients ADD COLUMN IF NOT EXISTS phone VARCHAR(20)",
     "ALTER TABLE patient_doctor_visit ADD COLUMN IF NOT EXISTS visit_date DATE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS created_on DATE",
-    # Second revision: families, per-prescription privacy, checkups, Calendly.
+    # Second revision: families, per-prescription privacy and checkups.
     "ALTER TABLE patients ADD COLUMN IF NOT EXISTS family_id INTEGER "
     "REFERENCES families(family_id) ON DELETE SET NULL",
     "ALTER TABLE patients ADD COLUMN IF NOT EXISTS relation VARCHAR(20)",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS is_private BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_date DATE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_time TIME",
-    "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS calendly_url VARCHAR(255)",
     "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS slot_minutes INTEGER NOT NULL DEFAULT 30",
 ]
 
@@ -100,6 +124,47 @@ def migrate() -> None:
             db.execute(text(statement))
         db.commit()
         print("Columns present.")
+
+        # A doctor with no windows cannot be booked at all, so give every
+        # existing doctor the standard schedule. Customised ones are untouched.
+        doctors = db.scalars(select(Doctor).order_by(Doctor.doctor_id)).all()
+        filled = 0
+        for doctor in doctors:
+            if ensure_default_windows(db, doctor):
+                filled += 1
+                print(f"  {doctor.name}: default availability added")
+        db.commit()
+        if not filled:
+            print("  every doctor already has availability")
+
+        # Give every medicine a patient is on a stock count, so the low-stock
+        # warning has something real to count down from.
+        made = 0
+        seen: set[tuple[int, str]] = set()
+        for schedule in db.scalars(select(MedicationSchedule)).all():
+            key = (schedule.patient_id, schedule.medicine_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            if (
+                db.scalar(
+                    select(MedicineStock).where(
+                        MedicineStock.patient_id == schedule.patient_id,
+                        MedicineStock.medicine_name == schedule.medicine_name,
+                    )
+                )
+                is None
+            ):
+                db.add(
+                    MedicineStock(
+                        patient_id=schedule.patient_id,
+                        medicine_name=schedule.medicine_name,
+                        units_remaining=30,
+                    )
+                )
+                made += 1
+        db.commit()
+        print(f"  stock rows seeded: {made}")
 
         for statement, label in (
             (BACKFILL_PRESCRIPTION_DATES, "prescriptions.created_on"),

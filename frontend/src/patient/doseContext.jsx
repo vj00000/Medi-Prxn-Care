@@ -8,25 +8,13 @@ import {
   useState,
 } from 'react'
 import { useApp } from '../store/AppStore'
+import { markDoseTaken, untakeDose } from '../lib/api'
 import { CURRENT_PATIENT_ID, checkupHour, dueDoses, todayIso } from './patientData'
 
 const DoseContext = createContext(null)
 
 const CHECK_INTERVAL_MS = 30_000
 const SNOOZE_MS = 10 * 60 * 1000
-
-/** Date-scoped, so yesterday's doses do not suppress today's alarm. */
-function storageKey() {
-  return `smartrx:doses:${new Date().toISOString().slice(0, 10)}`
-}
-
-function loadTaken() {
-  try {
-    return JSON.parse(localStorage.getItem(storageKey()) ?? '{}')
-  } catch {
-    return {}
-  }
-}
 
 const DISMISSED_CHECKUPS_KEY = 'smartrx:checkup-dismissed'
 
@@ -43,20 +31,32 @@ function loadDismissedCheckups() {
  * Owns everything the alarm needs: which doses are taken, and which dose (if
  * any) is currently ringing. Kept above the patient routes so the alarm
  * survives tab changes and Home can share the same "taken" state.
+ *
+ * Taken state lives in the database, not localStorage: a dose recorded on one
+ * device must not ring on another, and the stock count has to be authoritatively
+ * decremented exactly once. The schedule rows carry `taken_today` and
+ * `taken_at`, so this context only needs to trigger a refresh.
  */
 export function DoseProvider({ children }) {
-  const { patients, prescriptions } = useApp()
-  const schedules =
-    patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)?.schedules ?? []
+  const { patients, prescriptions, refreshFamily } = useApp()
+  const selected = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
+  const schedules = selected?.schedules ?? []
 
-  const [taken, setTaken] = useState(loadTaken)
+  /** schedule id -> taken_at, built from the server's own record. */
+  const taken = useMemo(
+    () =>
+      Object.fromEntries(
+        schedules
+          .filter((schedule) => schedule.taken_today)
+          .map((schedule) => [schedule.id, schedule.taken_at ?? true]),
+      ),
+    [schedules],
+  )
+
   const [ringing, setRinging] = useState(null)
   const [dismissedCheckups, setDismissedCheckups] = useState(loadDismissedCheckups)
   const snoozedUntil = useRef({})
-
-  useEffect(() => {
-    localStorage.setItem(storageKey(), JSON.stringify(taken))
-  }, [taken])
+  const [busy, setBusy] = useState({})
 
   useEffect(() => {
     localStorage.setItem(DISMISSED_CHECKUPS_KEY, JSON.stringify(dismissedCheckups))
@@ -80,18 +80,41 @@ export function DoseProvider({ children }) {
     return hour !== undefined && now.getHours() < hour ? null : due
   }, [prescriptions, dismissedCheckups])
 
-  const markTaken = useCallback((id) => {
-    setTaken((prev) => ({ ...prev, [id]: true }))
-    setRinging((current) => (current?.id === id ? null : current))
-  }, [])
+  const markTaken = useCallback(
+    async (id) => {
+      setRinging((current) => (current?.id === id ? null : current))
+      setBusy((prev) => ({ ...prev, [id]: true }))
+      try {
+        await markDoseTaken(CURRENT_PATIENT_ID, id)
+        // Refetch so stock and taken_today come from the server, not a guess.
+        await refreshFamily()
+      } finally {
+        setBusy((prev) => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      }
+    },
+    [refreshFamily],
+  )
 
-  const untake = useCallback((id) => {
-    setTaken((prev) => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }, [])
+  const untake = useCallback(
+    async (id) => {
+      setBusy((prev) => ({ ...prev, [id]: true }))
+      try {
+        await untakeDose(CURRENT_PATIENT_ID, id)
+        await refreshFamily()
+      } finally {
+        setBusy((prev) => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+      }
+    },
+    [refreshFamily],
+  )
 
   const dismissAlarm = useCallback(() => setRinging(null), [])
 
@@ -130,6 +153,7 @@ export function DoseProvider({ children }) {
   const value = useMemo(
     () => ({
       taken,
+      busy,
       markTaken,
       untake,
       ringing,
@@ -141,6 +165,7 @@ export function DoseProvider({ children }) {
     }),
     [
       taken,
+      busy,
       markTaken,
       untake,
       ringing,

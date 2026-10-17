@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -18,7 +18,8 @@ import Badge from '../../components/Badge'
 import Button from '../../components/Button'
 import AddFamilyMember from '../components/AddFamilyMember'
 import BookAppointment from '../components/BookAppointment'
-import { CURRENT_PATIENT_ID, formatCheckup, reorderStatus } from '../patientData'
+import { CURRENT_PATIENT_ID, formatCheckup } from '../patientData'
+import { getLowStock } from '../../lib/api'
 
 const RELATION_LABEL = {
   self: 'You',
@@ -33,12 +34,29 @@ function initials(name) {
 
 export default function Home() {
   const { family, loading, doctor, prescriptions, addMember, setCheckupDate } = useApp()
-  const { taken, markTaken, untake } = useDoses()
+  const { taken, busy, markTaken, untake } = useDoses()
   const { add: addToCart, count } = useCart()
 
   const [selectedId, setSelectedId] = useState(CURRENT_PATIENT_ID)
   const [adding, setAdding] = useState(false)
   const [booking, setBooking] = useState(false)
+  const [lowStock, setLowStock] = useState([])
+
+  // Refetched whenever the family reloads, so taking a dose — which draws stock
+  // down — also refreshes what is running out.
+  useEffect(() => {
+    let cancelled = false
+    getLowStock(CURRENT_PATIENT_ID)
+      .then((rows) => {
+        if (!cancelled) setLowStock(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setLowStock([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [family])
 
   if (loading) {
     return <p className="px-1 text-sm text-slate-400">Loading your family…</p>
@@ -145,6 +163,66 @@ export default function Home() {
         )}
       </div>
 
+      {lowStock.length > 0 && (
+        <SectionCard title="Running low">
+          <ul className="divide-y divide-slate-100">
+            {lowStock.map((row) => {
+              // Reuse the schedule's cart key so restocking merges with the
+              // entry the medicine row would create, instead of duplicating it.
+              const schedule = selected.schedules.find(
+                (item) => item.medicine_name === row.medicine_name,
+              )
+              return (
+                <li key={row.medicine_name} className="flex items-center gap-2 py-2.5">
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+                      row.out_of_stock
+                        ? 'bg-rose-50 text-rose-600'
+                        : 'bg-amber-50 text-amber-600'
+                    }`}
+                  >
+                    <AlertTriangle size={15} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-900">
+                      {row.medicine_name}
+                    </p>
+                    <p
+                      className={`text-[11px] font-semibold ${
+                        row.out_of_stock ? 'text-rose-600' : 'text-amber-600'
+                      }`}
+                    >
+                      {row.out_of_stock
+                        ? 'Out of stock — reorder now'
+                        : `Only ${row.units_remaining} left`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      addToCart({
+                        key: schedule
+                          ? `${selected.patient_id}:${schedule.id}`
+                          : `${selected.patient_id}:name:${row.medicine_name}`,
+                        scheduleId: schedule?.id ?? null,
+                        member: selected.name,
+                        medicine_name: row.medicine_name,
+                        dosage: schedule?.dosage ?? null,
+                        timing_slot: schedule?.timing_slot ?? null,
+                      })
+                    }
+                    className="shrink-0 rounded-lg p-2 text-brand-700 transition-colors hover:bg-brand-50"
+                    aria-label={`Add ${row.medicine_name} to cart`}
+                  >
+                    <ShoppingCart size={16} />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </SectionCard>
+      )}
+
       <SectionCard title="Medicines">
         {selected.schedules.length === 0 ? (
           <p className="text-sm text-slate-400">
@@ -153,8 +231,8 @@ export default function Home() {
         ) : (
           <ul className="divide-y divide-slate-100">
             {selected.schedules.map((schedule) => {
-              const reorder = reorderStatus(schedule)
               const isTaken = isSelf && !!taken[schedule.id]
+              const units = schedule.units_remaining
               return (
                 <li key={schedule.id} className="flex items-center gap-2 py-3">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
@@ -170,20 +248,16 @@ export default function Home() {
                     </p>
                     <p className="truncate text-xs text-slate-500">
                       {[schedule.dosage, schedule.timing_slot].filter(Boolean).join(' · ')}
+                      {units != null && (
+                        <span
+                          className={
+                            schedule.low_stock ? 'font-semibold text-amber-600' : ''
+                          }
+                        >
+                          {units === 0 ? ' · out of stock' : ` · ${units} left`}
+                        </span>
+                      )}
                     </p>
-                    {reorder && (
-                      <p
-                        className={`mt-1 text-[11px] font-semibold ${
-                          reorder.level === 'now' ? 'text-rose-600' : 'text-amber-600'
-                        }`}
-                      >
-                        {reorder.level === 'now'
-                          ? 'Supply ended — reorder now'
-                          : `Reorder soon · ${
-                              reorder.days === 0 ? 'ends today' : `${reorder.days} day(s) left`
-                            }`}
-                      </p>
-                    )}
                   </div>
                   <button
                     type="button"
@@ -205,8 +279,9 @@ export default function Home() {
                   {isSelf && (
                     <button
                       type="button"
+                      disabled={!!busy[schedule.id]}
                       onClick={() => (isTaken ? untake(schedule.id) : markTaken(schedule.id))}
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors disabled:opacity-40 ${
                         isTaken
                           ? 'border-emerald-500 bg-emerald-500 text-white'
                           : 'border-slate-300 text-transparent hover:border-emerald-400'
@@ -242,7 +317,7 @@ export default function Home() {
                   : 'No follow-up scheduled yet.'}
               </p>
               <p className="mt-0.5 text-xs text-slate-500">
-                Book with {doctor?.name ?? 'your doctor'} on Calendly.
+                Book with {doctor?.name ?? 'your doctor'} — pick any open slot.
               </p>
             </div>
             <Button size="sm" onClick={() => setBooking(true)}>

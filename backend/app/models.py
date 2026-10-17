@@ -7,12 +7,13 @@ explicit first argument to ``mapped_column``.
 """
 
 import enum
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import List, Optional
 
 from sqlalchemy import (
     Boolean,
     Date,
+    DateTime,
     Enum,
     ForeignKey,
     Integer,
@@ -44,7 +45,6 @@ class Doctor(Base):
     specialization: Mapped[Optional[str]] = mapped_column(String(100))
     contact_number: Mapped[Optional[str]] = mapped_column(String(20))
     gender: Mapped[Optional[str]] = mapped_column(String(20))
-    calendly_url: Mapped[Optional[str]] = mapped_column(String(255))
     # Consulting-slot length used when generating bookable times.
     slot_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
 
@@ -322,6 +322,68 @@ class MedicationSchedule(Base):
     patient: Mapped["Patient"] = relationship(back_populates="medication_schedules")
     prescription: Mapped[Optional["Prescription"]] = relationship(
         back_populates="medication_schedules"
+    )
+    doses: Mapped[List["DoseLog"]] = relationship(
+        back_populates="schedule", cascade="all, delete-orphan"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 10b. dose_logs — one row per dose actually swallowed
+# --------------------------------------------------------------------------- #
+class DoseLog(Base):
+    """A recorded dose.
+
+    The unique ``(schedule_id, dose_date)`` pair is the guarantee behind "mark
+    taken only once for that time": a second tap cannot record the same dose,
+    so stock is never decremented twice. Because the key includes the date, a
+    new dose becomes recordable again tomorrow — which is also what lets the
+    next reminder fire.
+    """
+
+    __tablename__ = "dose_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    schedule_id: Mapped[int] = mapped_column(
+        ForeignKey("medication_schedules.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.patient_id", ondelete="CASCADE"), nullable=False
+    )
+    dose_date: Mapped[date] = mapped_column(Date, nullable=False)
+    taken_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "dose_date", name="uq_dose_log_per_slot"),
+    )
+
+    schedule: Mapped["MedicationSchedule"] = relationship(back_populates="doses")
+
+
+# --------------------------------------------------------------------------- #
+# 10c. medicine_stock — units left, per patient and medicine
+# --------------------------------------------------------------------------- #
+class MedicineStock(Base):
+    """How much of one medicine a patient has left.
+
+    Stock is keyed on patient and medicine name rather than on a schedule:
+    morning and night schedules for the same drug draw down the same pack, so
+    counting per slot would double the apparent supply.
+    """
+
+    __tablename__ = "medicine_stock"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.patient_id", ondelete="CASCADE"), nullable=False
+    )
+    medicine_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    units_remaining: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Warn at or below this many units.
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+
+    __table_args__ = (
+        UniqueConstraint("patient_id", "medicine_name", name="uq_stock_per_medicine"),
     )
 
 

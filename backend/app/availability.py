@@ -14,6 +14,46 @@ from app.models import Doctor, DoctorAvailability, PatientDoctorVisit, Prescript
 
 DEFAULT_SLOT_MINUTES = 30
 
+# The schedule every doctor starts with: two sessions on weekdays and Saturday
+# mornings, Sunday closed. Used at onboarding and backfilled for any doctor who
+# has no windows yet.
+DEFAULT_WEEKLY_WINDOWS = [
+    *[(weekday, time(9, 0), time(13, 0)) for weekday in range(5)],
+    *[(weekday, time(15, 0), time(18, 0)) for weekday in range(5)],
+    (5, time(9, 0), time(12, 0)),
+]
+
+
+def ensure_default_windows(db: Session, doctor: Doctor) -> bool:
+    """Give a doctor the standard weekly schedule if they have none.
+
+    Idempotent and non-destructive: a doctor with even one window defined is
+    left completely alone, so a customised schedule is never overwritten.
+    Returns True when windows were created.
+    """
+    existing = db.scalar(
+        select(DoctorAvailability).where(
+            DoctorAvailability.doctor_id == doctor.doctor_id
+        )
+    )
+    if existing is not None:
+        return False
+
+    if not doctor.slot_minutes:
+        doctor.slot_minutes = DEFAULT_SLOT_MINUTES
+
+    for weekday, start, end in DEFAULT_WEEKLY_WINDOWS:
+        db.add(
+            DoctorAvailability(
+                doctor_id=doctor.doctor_id,
+                weekday=weekday,
+                start_time=start,
+                end_time=end,
+            )
+        )
+    db.flush()
+    return True
+
 
 def _minutes_of_day(value: time) -> int:
     return value.hour * 60 + value.minute

@@ -1,6 +1,6 @@
 """Request/response models for the API layer."""
 
-from datetime import date, time
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,17 +41,18 @@ class DoctorOut(BaseModel):
     specialization: str | None = None
     contact_number: str | None = None
     gender: str | None = None
-    # Each doctor keeps their own booking link, so a patient reschedules against
-    # the doctor who actually issued the prescription.
-    calendly_url: str | None = None
     # Length of one consulting slot, in minutes.
     slot_minutes: int = 30
 
 
-class DoctorUpdate(BaseModel):
-    """Set or clear a doctor's own scheduling link."""
+class DoctorCreate(BaseModel):
+    """A doctor being onboarded. Defaults give them a bookable schedule."""
 
-    calendly_url: str | None = None
+    name: str
+    specialization: str | None = None
+    contact_number: str | None = None
+    gender: str | None = None
+    slot_minutes: int = 30
 
 
 class AvailabilityOut(BaseModel):
@@ -128,6 +129,35 @@ class ScheduleOut(BaseModel):
     end_date: date | None = None
     # Used client-side to flag "reorder soon" before the supply runs out.
     prescription_id: int | None = None
+    # Today's dose state, so a reminder can show only what is still due.
+    taken_today: bool = False
+    taken_at: datetime | None = None
+    # Units of this medicine left for this patient.
+    units_remaining: int | None = None
+    low_stock: bool = False
+
+
+class DoseTakenOut(BaseModel):
+    """Result of marking or unmarking a single dose."""
+
+    schedule_id: int
+    dose_date: date
+    taken: bool
+    # True when the call was a no-op because the dose was already recorded.
+    already_taken: bool = False
+    units_remaining: int | None = None
+    low_stock: bool = False
+
+
+class LowStockOut(BaseModel):
+    """One medicine at or below its reorder threshold."""
+
+    patient_id: int
+    medicine_name: str
+    units_remaining: int
+    low_stock_threshold: int
+    # Nothing left at all, so the UI can say "out of stock" rather than "low".
+    out_of_stock: bool = False
 
 
 class PatientOut(BaseModel):

@@ -1,40 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CalendarDays, Loader2, X } from 'lucide-react'
 import Button from '../../components/Button'
 import { getAvailability } from '../../lib/api'
 import { formatLongDate, formatTime, todayIso } from '../patientData'
-
-const SCRIPT_SRC = 'https://assets.calendly.com/assets/external/widget.js'
-
-/** Calendly's embed script is loaded once and reused across openings. */
-function loadCalendly() {
-  if (window.Calendly) return Promise.resolve()
-  const existing = document.querySelector(`script[src="${SCRIPT_SRC}"]`)
-  if (existing) {
-    return new Promise((resolve) => existing.addEventListener('load', resolve))
-  }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = SCRIPT_SRC
-    script.onload = resolve
-    script.onerror = reject
-    document.body.appendChild(script)
-  })
-}
-
-/**
- * Calendly reports the slot in UTC; the patient reads local wall-clock time,
- * which is also what the clinic means by "10:30".
- */
-function localSlot(start) {
-  const parsed = new Date(start)
-  if (Number.isNaN(parsed.getTime())) return null
-  const pad = (value) => String(value).padStart(2, '0')
-  return {
-    date: `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`,
-    time: `${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`,
-  }
-}
 
 /**
  * Reschedule against the doctor who issued the prescription.
@@ -51,52 +19,12 @@ export default function BookAppointment({
   onBooked,
   onClose,
 }) {
-  const container = useRef(null)
-  const [status, setStatus] = useState(doctor?.calendly_url ? 'loading' : 'none')
   const [date, setDate] = useState(currentIso ?? '')
   const [time, setTime] = useState(currentTime ? String(currentTime).slice(0, 5) : '')
   const [slots, setSlots] = useState([])
   const [slotState, setSlotState] = useState('idle')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (!doctor?.calendly_url) {
-      setStatus('none')
-      return undefined
-    }
-
-    let cancelled = false
-
-    function onMessage(event) {
-      const payload = event.data
-      if (!payload || payload.event !== 'calendly.event_scheduled') return
-      const slot = localSlot(payload.payload?.event?.start_time)
-      if (!slot) return
-      setDate(slot.date)
-      setTime(slot.time)
-    }
-
-    window.addEventListener('message', onMessage)
-
-    loadCalendly()
-      .then(() => {
-        if (cancelled || !container.current) return
-        window.Calendly.initInlineWidget({
-          url: doctor.calendly_url,
-          parentElement: container.current,
-        })
-        setStatus('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('failed')
-      })
-
-    return () => {
-      cancelled = true
-      window.removeEventListener('message', onMessage)
-    }
-  }, [doctor])
 
   useEffect(() => {
     if (!date || !doctor?.doctor_id) {
@@ -114,10 +42,11 @@ export default function BookAppointment({
         setSlots((data.slots ?? []).map((slot) => String(slot).slice(0, 5)))
         setSlotState('ready')
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return
         setSlots([])
         setSlotState('error')
+        setError(err.message)
       })
 
     return () => {
@@ -181,33 +110,6 @@ export default function BookAppointment({
             </p>
           )}
 
-          {doctor?.calendly_url && status !== 'failed' && (
-            <>
-              <p className="mb-2 text-xs font-medium text-slate-600">
-                Book on {doctor.name}'s Calendly
-              </p>
-              <div
-                ref={container}
-                className="min-h-[480px] overflow-hidden rounded-xl border border-slate-200"
-              />
-              <p className="mt-3 text-center text-[11px] font-medium uppercase tracking-wider text-slate-400">
-                or pick from their open slots
-              </p>
-            </>
-          )}
-
-          {status === 'failed' && (
-            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {doctor?.name}'s Calendly could not be loaded. Pick a slot below.
-            </p>
-          )}
-
-          {status === 'none' && doctor && (
-            <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              {doctor.name} has not connected a booking calendar. Pick a slot below.
-            </p>
-          )}
-
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-600">Date</span>
             <input
@@ -236,7 +138,7 @@ export default function BookAppointment({
 
               {slotState === 'loading' && (
                 <p className="inline-flex items-center gap-1.5 text-xs text-slate-400">
-                  <Loader2 size={13} className="animate-spin" /> Checking the calendar…
+                  <Loader2 size={13} className="animate-spin" /> Checking the schedule…
                 </p>
               )}
 

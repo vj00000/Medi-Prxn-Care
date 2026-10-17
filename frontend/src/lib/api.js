@@ -38,6 +38,24 @@ async function post(path, body) {
   return response.json()
 }
 
+async function del(path) {
+  const response = await fetch(`${BASE}${path}`, { method: 'DELETE' })
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
+/** Record today's dose for one schedule. The server is idempotent. */
+export const markDoseTaken = (patientId, scheduleId) =>
+  post(`/patients/${patientId}/doses/${scheduleId}/taken`)
+
+/** Undo today's dose, returning the unit to stock. */
+export const untakeDose = (patientId, scheduleId) =>
+  del(`/patients/${patientId}/doses/${scheduleId}/taken`)
+
+/** Medicines at or below their reorder threshold, most urgent first. */
+export const getLowStock = (patientId) =>
+  get(`/patients/${patientId}/low-stock`)
+
 export const api = {
   /** The prescribing doctor — the first row of `doctors`. */
   getDoctor: async () => (await get('/doctors'))[0] ?? null,
@@ -109,7 +127,7 @@ export function getAvailability(doctorId, isoDate, excludePrescriptionId = null)
   return get(`/doctors/${doctorId}/availability?${params.toString()}`)
 }
 
-/** Record the follow-up slot the patient picked (Calendly or by hand). */
+/** Record the follow-up slot the patient picked. */
 export const setCheckup = (id, isoDate, isoTime = null) =>
   post(`/prescriptions/${id}/checkup`, {
     next_checkup_date: isoDate,

@@ -6,14 +6,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.availability import available_slots
+from app.availability import (
+    DEFAULT_SLOT_MINUTES,
+    available_slots,
+    ensure_default_windows,
+)
 from app.database import get_db
 from app.models import Disease, Doctor, Medicine
 from app.schemas import (
     AvailabilityOut,
     DiseaseOut,
+    DoctorCreate,
     DoctorOut,
-    DoctorUpdate,
     MedicineCatalogOut,
 )
 
@@ -25,21 +29,28 @@ def list_doctors(db: Session = Depends(get_db)):
     return db.scalars(select(Doctor).order_by(Doctor.doctor_id)).all()
 
 
-@router.patch("/doctors/{doctor_id}", response_model=DoctorOut)
-def update_doctor(doctor_id: int, payload: DoctorUpdate, db: Session = Depends(get_db)):
-    """Give one doctor their own booking link, or clear it."""
-    doctor = db.get(Doctor, doctor_id)
-    if doctor is None:
-        raise HTTPException(status_code=404, detail=f"Doctor {doctor_id} not found")
+@router.post("/doctors", response_model=DoctorOut, status_code=201)
+def create_doctor(payload: DoctorCreate, db: Session = Depends(get_db)):
+    """Onboard a doctor and make them bookable straight away.
 
-    url = (payload.calendly_url or "").strip() or None
-    if url and not url.startswith(("https://calendly.com/", "http://calendly.com/")):
-        raise HTTPException(
-            status_code=422,
-            detail="calendly_url must start with https://calendly.com/",
-        )
+    Windows are provisioned in the same transaction, so a newly created doctor
+    never sits in the database with an empty schedule.
+    """
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="A doctor needs a name.")
 
-    doctor.calendly_url = url
+    doctor = Doctor(
+        name=name,
+        specialization=payload.specialization,
+        contact_number=payload.contact_number,
+        gender=payload.gender,
+        slot_minutes=payload.slot_minutes or DEFAULT_SLOT_MINUTES,
+    )
+    db.add(doctor)
+    db.flush()  # needs doctor_id before the windows can reference it
+
+    ensure_default_windows(db, doctor)
     db.commit()
     db.refresh(doctor)
     return doctor
