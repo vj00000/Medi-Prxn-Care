@@ -114,8 +114,8 @@ export default function Prescriptions() {
 
       {booking && (
         <BookAppointment
-          doctor={doctor}
-          currentDate={formatLongDate(booking.next_checkup_date)}
+          doctor={booking.doctor ?? doctor}
+          currentIso={booking.next_checkup_date}
           onBooked={async (iso) => {
             await setCheckupDate(booking.prescription_id, iso)
             setBooking(null)

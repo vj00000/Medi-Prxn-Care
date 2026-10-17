@@ -284,8 +284,8 @@ export default function Home() {
 
       {booking && (
         <BookAppointment
-          doctor={doctor}
-          currentDate={nextCheckup ? formatLongDate(nextCheckup.next_checkup_date) : null}
+          doctor={nextCheckup?.doctor ?? mine[0]?.doctor ?? doctor}
+          currentIso={nextCheckup?.next_checkup_date ?? null}
           onBooked={async (iso) => {
             const target = nextCheckup ?? mine[0]
             if (target) await setCheckupDate(target.prescription_id, iso)

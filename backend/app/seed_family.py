@@ -24,6 +24,9 @@ from app.models import (
 )
 
 FAMILY_NAME = "Rao Family"
+# Placeholder for the primary doctor. Each doctor can point at their own
+# calendar via PATCH /doctors/{id}. An event-type URL (.../<owner>/<event>)
+# embeds reliably; a bare profile URL only shows the list of event types.
 CALENDLY_URL = "https://calendly.com/yogsamarpanam-app"
 
 
@@ -139,7 +142,9 @@ def seed() -> None:
             print("No doctors found - run `python -m app.seed_db` first.")
             return
 
-        if doctor.calendly_url != CALENDLY_URL:
+        # Only fill a link the doctor has not configured. Overwriting here would
+        # stomp a per-doctor calendar every time the seed runs.
+        if not doctor.calendly_url:
             doctor.calendly_url = CALENDLY_URL
             print(f"  doctor calendly_url -> {CALENDLY_URL}")
 

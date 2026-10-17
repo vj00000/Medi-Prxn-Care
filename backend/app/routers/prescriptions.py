@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.schemas import (
     CheckupUpdate,
+    DoctorOut,
     MedicineLine,
     MedicineOut,
     PrescriptionCreate,
@@ -59,11 +60,13 @@ def _to_out(db: Session, rx: Prescription, warnings: list[str] | None = None) ->
         )
     )
     status = rx.status.value if isinstance(rx.status, PrescriptionStatus) else str(rx.status)
+    doctor = db.get(Doctor, visit.doctor_id) if visit and visit.doctor_id else None
 
     return PrescriptionOut(
         prescription_id=rx.prescription_id,
         patient_id=visit.patient_id if visit else 0,
         doctor_id=visit.doctor_id if visit else None,
+        doctor=DoctorOut.model_validate(doctor) if doctor else None,
         status=status,
         transcript=rx.transcript,
         case_paper_url=rx.case_paper_url,

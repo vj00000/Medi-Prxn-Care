@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { CalendarPlus, X } from 'lucide-react'
+import { CalendarDays, X } from 'lucide-react'
 import Button from '../../components/Button'
+import { formatLongDate, todayIso } from '../patientData'
 
 const SCRIPT_SRC = 'https://assets.calendly.com/assets/external/widget.js'
 
@@ -20,67 +21,87 @@ function loadCalendly() {
   })
 }
 
-function isoInDays(days) {
-  const date = new Date()
-  date.setDate(date.getDate() + days)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${date.getFullYear()}-${month}-${day}`
-}
-
 /**
- * The doctor's Calendly widget, inline.
+ * Reschedule a follow-up with the doctor who issued the prescription.
  *
- * Calendly reports a completed booking on the window `message` bus, which is
- * how we learn the slot without a webhook. If the embed cannot load (no link,
- * offline, blocked), a quick action still sets a date so the flow is testable.
+ * The Calendly embed is offered when that doctor has their own link, but it is
+ * never the only way out: Calendly reports a completed booking on the window
+ * `message` bus, and that event does not always carry a parseable start time.
+ * The date field below is the guaranteed path, so rescheduling always works.
  */
-export default function BookAppointment({ doctor, currentDate, onBooked, onClose }) {
+export default function BookAppointment({ doctor, currentIso, onBooked, onClose }) {
   const container = useRef(null)
-  const [status, setStatus] = useState('loading')
+  const [status, setStatus] = useState(doctor?.calendly_url ? 'loading' : 'none')
+  const [date, setDate] = useState(currentIso ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
+    if (!doctor?.calendly_url) {
+      setStatus('none')
+      return undefined
+    }
+
     let cancelled = false
 
     function onMessage(event) {
       const payload = event.data
       if (!payload || payload.event !== 'calendly.event_scheduled') return
       const start = payload.payload?.event?.start_time
-      if (start) onBooked(String(start).slice(0, 10))
+      // No start_time => leave it to the date field rather than silently no-op.
+      if (start) setDate(String(start).slice(0, 10))
     }
 
     window.addEventListener('message', onMessage)
 
-    if (!doctor?.calendly_url) {
-      setStatus('failed')
-    } else {
-      loadCalendly()
-        .then(() => {
-          if (cancelled || !container.current) return
-          window.Calendly.initInlineWidget({
-            url: doctor.calendly_url,
-            parentElement: container.current,
-          })
-          setStatus('ready')
+    loadCalendly()
+      .then(() => {
+        if (cancelled || !container.current) return
+        window.Calendly.initInlineWidget({
+          url: doctor.calendly_url,
+          parentElement: container.current,
         })
-        .catch(() => {
-          if (!cancelled) setStatus('failed')
-        })
-    }
+        setStatus('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setStatus('failed')
+      })
 
     return () => {
       cancelled = true
       window.removeEventListener('message', onMessage)
     }
-  }, [doctor, onBooked])
+  }, [doctor])
+
+  async function save(event) {
+    event.preventDefault()
+    if (!date) {
+      setError('Pick a date first.')
+      return
+    }
+    setError('')
+    setSaving(true)
+    try {
+      await onBooked(date)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/60 p-4 sm:items-center">
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
+      <form onSubmit={save} className="w-full max-w-lg rounded-2xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
           <div>
-            <p className="text-sm font-semibold text-slate-900">Book a follow-up</p>
-            <p className="text-xs text-slate-500">{doctor?.name ?? 'Your doctor'}</p>
+            <p className="text-sm font-semibold text-slate-900">
+              {currentIso ? 'Reschedule follow-up' : 'Book a follow-up'}
+            </p>
+            <p className="text-xs text-slate-500">
+              {doctor?.name ?? 'Your doctor'}
+              {doctor?.specialization ? ` · ${doctor.specialization}` : ''}
+            </p>
           </div>
           <button
             type="button"
@@ -93,30 +114,55 @@ export default function BookAppointment({ doctor, currentDate, onBooked, onClose
         </div>
 
         <div className="px-5 py-4">
-          {currentDate && (
+          {currentIso && (
             <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              Currently scheduled for <strong>{currentDate}</strong>.
+              Currently scheduled for <strong>{formatLongDate(currentIso)}</strong>.
             </p>
           )}
 
-          {status === 'failed' ? (
-            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              The Calendly widget could not be loaded. Use the quick action below.
-            </p>
-          ) : (
-            <div ref={container} className="min-h-[560px]" />
+          {doctor?.calendly_url && status !== 'failed' && (
+            <>
+              <p className="mb-2 text-xs font-medium text-slate-600">
+                Pick a slot on {doctor.name}'s calendar
+              </p>
+              <div ref={container} className="min-h-[520px] overflow-hidden rounded-xl border border-slate-200" />
+              <p className="mt-3 text-center text-[11px] font-medium uppercase tracking-wider text-slate-400">
+                or set the date directly
+              </p>
+            </>
           )}
 
-          <div className="mt-4 border-t border-slate-100 pt-4">
-            <Button variant="ghost" className="w-full" onClick={() => onBooked(isoInDays(14))}>
-              <CalendarPlus size={15} /> Simulate a booking (14 days out)
-            </Button>
-            <p className="mt-2 text-center text-[11px] text-slate-400">
-              For trying the flow without a live Calendly account.
+          {status === 'failed' && (
+            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {doctor?.name}'s Calendly could not be loaded. Use the date below.
             </p>
-          </div>
+          )}
+
+          {status === 'none' && (
+            <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              {doctor?.name ?? 'This doctor'} has not connected a booking calendar yet. Pick a date
+              below and the clinic will confirm.
+            </p>
+          )}
+
+          <label className="mt-1 block">
+            <span className="mb-1 block text-xs font-medium text-slate-600">Follow-up date</span>
+            <input
+              type="date"
+              className="field"
+              value={date}
+              min={todayIso()}
+              onChange={(event) => setDate(event.target.value)}
+            />
+          </label>
+
+          {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+
+          <Button type="submit" loading={saving} className="mt-4 w-full">
+            <CalendarDays size={15} /> {currentIso ? 'Save new date' : 'Confirm date'}
+          </Button>
         </div>
-      </div>
+      </form>
     </div>
   )
 }

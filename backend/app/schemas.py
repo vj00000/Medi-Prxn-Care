@@ -33,10 +33,31 @@ class MedicineOut(BaseModel):
     is_active: bool = True
 
 
+class DoctorOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    doctor_id: int
+    name: str
+    specialization: str | None = None
+    contact_number: str | None = None
+    gender: str | None = None
+    # Each doctor keeps their own booking link, so a patient reschedules against
+    # the doctor who actually issued the prescription.
+    calendly_url: str | None = None
+
+
+class DoctorUpdate(BaseModel):
+    """Set or clear a doctor's own scheduling link."""
+
+    calendly_url: str | None = None
+
+
 class PrescriptionOut(BaseModel):
     prescription_id: int
     patient_id: int
     doctor_id: int | None = None
+    # The prescribing doctor, so a reschedule opens the right calendar.
+    doctor: DoctorOut | None = None
     status: str
     transcript: str | None = None
     case_paper_url: str | None = None
@@ -56,17 +77,6 @@ class PrescriptionOut(BaseModel):
 # --------------------------------------------------------------------------- #
 # Reference data and patient reads
 # --------------------------------------------------------------------------- #
-class DoctorOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    doctor_id: int
-    name: str
-    specialization: str | None = None
-    contact_number: str | None = None
-    gender: str | None = None
-    calendly_url: str | None = None
-
-
 class DiseaseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
