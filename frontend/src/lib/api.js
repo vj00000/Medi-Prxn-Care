@@ -38,6 +38,16 @@ async function post(path, body) {
   return response.json()
 }
 
+async function patch(path, body) {
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
 async function del(path) {
   const response = await fetch(`${BASE}${path}`, { method: 'DELETE' })
   if (!response.ok) throw await readError(response)
@@ -69,6 +79,25 @@ export const api = {
   baseUrl: BASE,
 }
 
+// --------------------------------------------------------------------------- //
+// Auth / onboarding
+// --------------------------------------------------------------------------- //
+
+/** Attach a bearer token, for the few endpoints that need identity. */
+async function authorizedGet(path, token) {
+  const response = await fetch(`${BASE}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) throw await readError(response)
+  return response.json()
+}
+
+export const doctorSignup = (payload) => post('/auth/doctor/signup', payload)
+export const doctorLogin = (payload) => post('/auth/doctor/login', payload)
+export const patientSignup = (payload) => post('/auth/patient/signup', payload)
+export const patientLogin = (payload) => post('/auth/patient/login', payload)
+export const authMe = (token) => authorizedGet('/auth/me', token)
+
 /**
  * Upload a case-paper / prescription image; the backend asks Gemini to read
  * it and returns a structured draft:
@@ -83,15 +112,20 @@ export async function extractPrescription(file) {
   return response.json()
 }
 
+/** Turn spoken or typed text into a structured medicine list. */
+export const parseNote = (text) => post('/ai/parse-note', { text })
+
 /**
- * Ask the prescribing assistant to change the draft.
- * Returns { draft, reply, actions } — `draft` is the updated prescription.
+ * Ask the prescribing assistant to change the draft or answer questions about
+ * a patient. Returns { draft, reply, actions } — `draft` is the updated
+ * prescription. Pass `patient_id` to let the assistant answer from that
+ * patient's record.
  */
-export async function chatWithDraft({ draft, message, history = [] }) {
+export async function chatWithDraft({ draft, message, history = [], patient_id = null }) {
   const response = await fetch(`${BASE}/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ draft, message, history }),
+    body: JSON.stringify({ draft, message, history, patient_id }),
   })
   if (!response.ok) throw await readError(response)
   return response.json()
@@ -102,6 +136,16 @@ export async function chatWithDraft({ draft, message, history = [] }) {
  * includes a `warnings` array of patient-safety notes (e.g. allergy clashes).
  */
 export const createPrescription = (payload) => post('/prescriptions', payload)
+
+/** A prescription the patient records for themselves (no doctor). */
+export const createPatientPrescription = (payload) => post('/prescriptions/self', payload)
+
+/** Edit a self-reported prescription; doctor-issued ones are rejected by the API. */
+export const updatePatientPrescription = (id, payload) =>
+  patch(`/prescriptions/${id}/self`, payload)
+
+/** Safety-check a draft (allergy clashes + drug interactions) without saving. */
+export const checkInteractions = (payload) => post('/prescriptions/interactions', payload)
 
 /** Move a prescription to `approved` in the database. */
 export const approvePrescription = (id) => post(`/prescriptions/${id}/approve`)
@@ -137,3 +181,11 @@ export const setCheckup = (id, isoDate, isoTime = null) =>
 /** Patient-side assistant: "book my checkup in two weeks". */
 export const patientChat = (patientId, message) =>
   post('/ai/patient-chat', { patient_id: patientId, message })
+
+/** Ask the patient assistant anything about the patient or their family. */
+export const patientAssistant = (patientId, message, history = []) =>
+  post('/ai/patient-assistant', { patient_id: patientId, message, history })
+
+/** Known interactions among the patient's own active medicines. */
+export const getPatientInteractions = (patientId) =>
+  get(`/patients/${patientId}/interactions`)

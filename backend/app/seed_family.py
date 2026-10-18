@@ -12,11 +12,13 @@ from sqlalchemy import func, select
 
 from app.availability import DEFAULT_WEEKLY_WINDOWS, ensure_default_windows
 from app.database import SessionLocal
+from app.family_code import qr_token_for, unique_code
 from app.models import (
     Doctor,
     Family,
     Medicine,
     MedicationSchedule,
+    MedicineStock,
     Patient,
     PatientDoctorVisit,
     Prescription,
@@ -82,7 +84,7 @@ def _add_prescription(db, patient, doctor, lines, *, created_on, checkup, is_pri
     return rx
 
 
-def _ensure_member(db, *, family, doctor, name, relation, age, gender, phone, qr_token, prescriptions):
+def _ensure_member(db, *, family, doctor, name, relation, age, gender, phone, prescriptions):
     member = db.scalar(select(Patient).where(Patient.name == name))
     if member is None:
         member = Patient(
@@ -93,7 +95,6 @@ def _ensure_member(db, *, family, doctor, name, relation, age, gender, phone, qr
             family_id=family.family_id,
             phone=phone,
             allergies="None reported",
-            qr_token=qr_token,
         )
         db.add(member)
         db.flush()
@@ -102,6 +103,11 @@ def _ensure_member(db, *, family, doctor, name, relation, age, gender, phone, qr
         member.family_id = family.family_id
         member.relation = relation
         print(f"  linked {name} to {FAMILY_NAME} as {relation}")
+
+    # Derived from the family code, so re-seeding keeps the token stable.
+    token = qr_token_for(family.code, member.patient_id)
+    if member.qr_token != token:
+        member.qr_token = token
 
     already = db.scalar(
         select(Prescription)
@@ -153,18 +159,25 @@ def seed() -> None:
 
         family = db.scalar(select(Family).where(Family.name == FAMILY_NAME))
         if family is None:
-            family = Family(name=FAMILY_NAME)
+            family = Family(name=FAMILY_NAME, code=unique_code(db))
             db.add(family)
             db.flush()
-            print(f"  created family '{FAMILY_NAME}'")
+            print(f"  created family '{FAMILY_NAME}' ({family.code})")
+        elif not family.code:
+            family.code = unique_code(db)
+            db.flush()
+            print(f"  family '{FAMILY_NAME}' -> {family.code}")
 
-        # The signed-in patient.
-        vikram = db.scalar(select(Patient).where(Patient.qr_token == "QR-VIKRAM-0001"))
+        # The signed-in patient. Looked up by name, not QR token: the token is
+        # derived from the family code and changes when it is assigned.
+        vikram = db.scalar(select(Patient).where(Patient.name == "Vikram Rao"))
         if vikram is not None:
             if vikram.family_id != family.family_id or vikram.relation != "self":
                 vikram.family_id = family.family_id
                 vikram.relation = "self"
                 print("  linked Vikram Rao as self")
+
+            vikram.qr_token = qr_token_for(family.code, vikram.patient_id)
 
             # Give his own prescription a follow-up date.
             own = db.scalar(
@@ -195,7 +208,6 @@ def seed() -> None:
             age=68,
             gender="male",
             phone="+91-90000-33333",
-            qr_token="QR-SURESH-0003",
             prescriptions=[
                 {
                     "transcript": "Hypertension review; continue current medication",
@@ -220,7 +232,6 @@ def seed() -> None:
             age=64,
             gender="female",
             phone="+91-90000-44444",
-            qr_token="QR-LAKSHMI-0004",
             prescriptions=[
                 {
                     "transcript": "Diabetes review; metformin continued",
@@ -243,6 +254,34 @@ def seed() -> None:
                 },
             ],
         )
+
+        # --- demo reorder signals ------------------------------------------ #
+        # A few medicines start low / out of stock so the reorder list and the
+        # patient assistant have something concrete to point at. Idempotent.
+        demo_stock = [
+            ("Vikram Rao", "Atorvastatin", 3, 7),
+            ("Suresh Rao", "Amlodipine", 0, 7),
+            ("Lakshmi Rao", "Metformin", 5, 7),
+        ]
+        for patient_name, medicine_name, remaining, threshold in demo_stock:
+            owner = db.scalar(select(Patient).where(Patient.name == patient_name))
+            if owner is None:
+                continue
+            stock = db.scalar(
+                select(MedicineStock).where(
+                    MedicineStock.patient_id == owner.patient_id,
+                    MedicineStock.medicine_name == medicine_name,
+                )
+            )
+            if stock is None:
+                stock = MedicineStock(
+                    patient_id=owner.patient_id,
+                    medicine_name=medicine_name,
+                )
+                db.add(stock)
+            stock.units_remaining = remaining
+            stock.low_stock_threshold = threshold
+            print(f"  stock: {patient_name} / {medicine_name} -> {remaining} left")
 
         db.commit()
         print("\nFamily seeded.")

@@ -3,55 +3,126 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   ImagePlus,
   Loader2,
   Mic,
   Plus,
-  Send,
   Square,
   Trash2,
 } from 'lucide-react'
 import { useApp } from '../store/AppStore'
-import { chatWithDraft, extractPrescription } from '../lib/api'
+import { checkInteractions, extractPrescription, getAvailability } from '../lib/api'
+import { useDictation } from '../lib/useDictation'
+import { formatLongDate, formatTime, todayIso } from '../patient/patientData'
 import Badge from '../components/Badge'
 import Button from '../components/Button'
 import SectionCard from '../components/SectionCard'
 
 const EMPTY_VITALS = { bp: '', spo2: '', advice: '' }
 
-function getSpeechRecognition() {
-  const Impl = window.SpeechRecognition || window.webkitSpeechRecognition
-  return Impl ? new Impl() : null
+/** "5 days" / "3 days" -> 5 / 3; anything else -> null. */
+function daysFrom(text) {
+  const match = (text ?? '').match(/(\d+)\s*day/i)
+  return match ? Number(match[1]) : null
+}
+
+/** A table cell that is plain text until clicked, then becomes an input. */
+function EditableCell({ value, onChange, type = 'text', className = '' }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const cancelRef = useRef(false)
+
+  function start() {
+    cancelRef.current = false
+    setDraft(value == null ? '' : String(value))
+    setEditing(true)
+  }
+
+  function finish() {
+    setEditing(false)
+    if (!cancelRef.current) onChange(draft)
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        type={type}
+        className="field w-full min-w-[90px] px-2 py-1"
+        value={draft}
+        placeholder="—"
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={finish}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.currentTarget.blur()
+          if (event.key === 'Escape') {
+            cancelRef.current = true
+            event.currentTarget.blur()
+          }
+        }}
+      />
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={start}
+      title="Click to edit"
+      className={`w-full rounded px-1 py-0.5 text-left transition-colors hover:bg-slate-100 focus:outline-none ${className}`}
+    >
+      {value === undefined || value === null || value === '' ? '—' : value}
+    </button>
+  )
 }
 
 export default function NewPrescription() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { getPatient, medicines, timingSlots, addPrescription, doctor, loading } = useApp()
+  const {
+    getPatient,
+    medicines,
+    timingSlots,
+    addPrescription,
+    doctor,
+    loading,
+    draft: rxDraft,
+    setDraft: setRxDraft,
+    resetDraft,
+  } = useApp()
   const patient = getPatient(id)
 
-  const [transcript, setTranscript] = useState('')
-  const [items, setItems] = useState([])
+  const [newMedicineName, setNewMedicineName] = useState('')
+  const [followUp, setFollowUp] = useState({ date: '', time: '' })
+  const [availableSlots, setAvailableSlots] = useState([])
+  const [slotsState, setSlotsState] = useState('idle')
   const [vitals, setVitals] = useState(EMPTY_VITALS)
   const [draft, setDraft] = useState({
     medicine_id: String(medicines[0]?.id ?? ''),
     dosage: '',
     timings: timingSlots[0],
+    days: '',
   })
-  // null | 'transcript' | 'chat' — which field the microphone is filling.
-  const [listening, setListening] = useState(null)
-  const [notice, setNotice] = useState('')
   const [casePaper, setCasePaper] = useState('')
   const [extracting, setExtracting] = useState(false)
   const [extractNote, setExtractNote] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [chatInput, setChatInput] = useState('')
-  const [chatMessages, setChatMessages] = useState([])
-  const [chatting, setChatting] = useState(false)
+  const [interactionResult, setInteractionResult] = useState(null)
+  const [checking, setChecking] = useState(false)
 
-  const recognitionRef = useRef(null)
-  const dictationBaseRef = useRef('')
+  const {
+    start: startDiagnosisDictation,
+    stop: stopDiagnosisDictation,
+    listening: dictating,
+    notice: dictationNotice,
+  } = useDictation((spoken) => {
+    setRxDraft((d) => ({
+      ...d,
+      diagnosis: d.diagnosis ? `${d.diagnosis} ${spoken}` : spoken,
+    }))
+  })
 
   // `medicines` is fetched from the API after the first render, so the select
   // starts empty and has to be seeded once the catalog arrives.
@@ -60,6 +131,41 @@ export default function NewPrescription() {
       setDraft((current) => ({ ...current, medicine_id: String(medicines[0].id) }))
     }
   }, [medicines, draft.medicine_id])
+
+  // The floating assistant edits the same draft — start clean for each patient
+  // and when leaving the form.
+  useEffect(() => {
+    resetDraft()
+    return () => resetDraft()
+  }, [id, resetDraft])
+
+  // Follow-up slots come from the doctor's real availability in the DB.
+  useEffect(() => {
+    if (!followUp.date || !doctor?.doctor_id) {
+      setAvailableSlots([])
+      setSlotsState('idle')
+      return undefined
+    }
+
+    let cancelled = false
+    setSlotsState('loading')
+
+    getAvailability(doctor.doctor_id, followUp.date)
+      .then((data) => {
+        if (cancelled) return
+        setAvailableSlots((data.slots ?? []).map((slot) => String(slot).slice(0, 5)))
+        setSlotsState('ready')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setAvailableSlots([])
+        setSlotsState('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [doctor, followUp.date])
 
   if (loading) {
     return (
@@ -83,108 +189,43 @@ export default function NewPrescription() {
     )
   }
 
-  function stopDictation() {
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
-    setListening(null)
-  }
-
-  /**
-   * Dictate into the chat box or the consultation notes using the browser's
-   * own speech API — no backend call, so it costs no Gemini quota.
-   */
-  function startDictation(target) {
-    if (listening) {
-      stopDictation()
-      return
-    }
-
-    const recognition = getSpeechRecognition()
-    if (!recognition) {
-      setNotice('Voice input needs Chrome, Edge or Safari.')
-      return
-    }
-
-    setNotice('')
-    dictationBaseRef.current =
-      target === 'transcript' && transcript ? `${transcript} ` : ''
-
-    recognition.lang = 'en-IN'
-    recognition.interimResults = true
-    recognition.continuous = false
-
-    recognition.onresult = (event) => {
-      let finalText = ''
-      let interim = ''
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const chunk = event.results[i][0].transcript
-        if (event.results[i].isFinal) finalText += chunk
-        else interim += chunk
-      }
-      const spoken = `${finalText}${interim}`.trim()
-      if (target === 'chat') {
-        setChatInput(spoken)
-      } else {
-        setTranscript(`${dictationBaseRef.current}${spoken}`)
-      }
-    }
-    recognition.onerror = (event) => {
-      setNotice(
-        event.error === 'not-allowed'
-          ? 'Microphone permission denied.'
-          : `Voice input error: ${event.error}`,
-      )
-      stopDictation()
-    }
-    recognition.onend = () => {
-      recognitionRef.current = null
-      setListening(null)
-    }
-
-    recognition.start()
-    recognitionRef.current = recognition
-    setListening(target)
-  }
-
   function addItem() {
-    const medicine = medicines.find((m) => m.id === Number(draft.medicine_id))
-    if (!medicine) return
-    setItems((prev) => [
-      ...prev,
-      {
-        medicine_id: medicine.id,
-        name: medicine.name,
-        dosage: draft.dosage.trim() || '—',
-        timings: draft.timings,
-      },
-    ])
-    setDraft((current) => ({ ...current, dosage: '' }))
+    const isNew = draft.medicine_id === 'new'
+    const newName = isNew ? newMedicineName.trim() : null
+    const medicine = isNew
+      ? null
+      : medicines.find((m) => m.id === Number(draft.medicine_id))
+    if (isNew ? !newName : !medicine) return
+
+    setRxDraft((current) => ({
+      ...current,
+      medicines: [
+        ...current.medicines,
+        {
+          medicine_id: medicine?.id ?? null,
+          name: medicine?.name ?? newName,
+          dosage: draft.dosage.trim() || '—',
+          timings: draft.timings,
+          duration_days: draft.days ? Number(draft.days) : null,
+        },
+      ],
+    }))
+    setNewMedicineName('')
+    setDraft((current) => ({
+      ...current,
+      dosage: '',
+      days: '',
+      medicine_id: String(medicines[0]?.id ?? ''),
+    }))
   }
 
-  function draftFromState() {
-    return {
-      transcript: transcript.trim() || null,
-      diagnosis: null,
-      lab_test: null,
-      medicines: items.map((item) => ({
-        medicine_id: item.medicine_id,
-        name: item.name,
-        dosage: item.dosage,
-        timings: item.timings,
-      })),
-    }
-  }
-
-  function applyDraft(next) {
-    setTranscript(next.transcript ?? '')
-    setItems(
-      (next.medicines ?? []).map((medicine) => ({
-        medicine_id: medicine.medicine_id ?? null,
-        name: medicine.name ?? '',
-        dosage: medicine.dosage ?? '—',
-        timings: medicine.timings ?? '—',
-      })),
-    )
+  function updateItem(index, patch) {
+    setRxDraft((current) => ({
+      ...current,
+      medicines: current.medicines.map((item, i) =>
+        i === index ? { ...item, ...patch } : item,
+      ),
+    }))
   }
 
   async function handleCasePaper(event) {
@@ -201,19 +242,21 @@ export default function NewPrescription() {
       const added = (extracted?.medicines ?? []).map((medicine) => {
         const name = (medicine.name ?? '').trim()
         const known = medicines.find((m) => m.name.toLowerCase() === name.toLowerCase())
-        const timings = [medicine.frequency, medicine.timing, medicine.duration]
-          .filter(Boolean)
-          .join(' · ')
+        const timings = [medicine.frequency, medicine.timing].filter(Boolean).join(' · ')
         return {
           medicine_id: known?.id ?? null,
           name: known?.name ?? (name || 'Unrecognised'),
           dosage: medicine.dosage ?? '—',
           timings: timings || '—',
+          duration_days: daysFrom(medicine.duration),
         }
       })
 
       if (added.length > 0) {
-        setItems((prev) => [...prev, ...added])
+        setRxDraft((current) => ({
+          ...current,
+          medicines: [...current.medicines, ...added],
+        }))
         setExtractNote(
           `Extracted ${added.length} medicine${added.length > 1 ? 's' : ''} — please review before submitting.`,
         )
@@ -229,8 +272,18 @@ export default function NewPrescription() {
         advice: extracted?.advice ?? '',
       })
 
-      if (extracted?.diagnosis) {
-        setTranscript((prev) => prev || `Diagnosis: ${extracted.diagnosis}`)
+      const extractedDetails = [
+        extracted?.symptoms && `Symptoms: ${extracted.symptoms.trim()}`,
+        extracted?.diagnosis && `Diagnosis: ${extracted.diagnosis.trim()}`,
+      ]
+        .filter(Boolean)
+        .join('\n')
+
+      if (extractedDetails) {
+        setRxDraft((current) => ({
+          ...current,
+          diagnosis: current.diagnosis || extractedDetails,
+        }))
       }
     } catch (err) {
       setExtractNote(`Extraction failed: ${err.message}`)
@@ -239,72 +292,52 @@ export default function NewPrescription() {
     }
   }
 
-  async function sendChat(event) {
-    event?.preventDefault?.()
-    const text = chatInput.trim()
-    if (!text || chatting) return
+  function buildPayload(approve) {
+    const observations = [vitals.bp && `BP ${vitals.bp}`, vitals.spo2 && `SpO2 ${vitals.spo2}`]
+      .filter(Boolean)
+      .join(', ')
 
-    setChatInput('')
-    setChatMessages((prev) => [...prev, { role: 'user', text }])
-    setChatting(true)
-
-    try {
-      const history = chatMessages.map((message) => ({
-        role: message.role,
-        text: message.text,
-      }))
-      const result = await chatWithDraft({ draft: draftFromState(), message: text, history })
-      applyDraft(result.draft)
-      setChatMessages((prev) => [...prev, { role: 'assistant', text: result.reply }])
-    } catch (err) {
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'assistant', text: `Assistant unavailable: ${err.message}`, error: true },
-      ])
-    } finally {
-      setChatting(false)
+    return {
+      patient_id: patient.patient_id,
+      doctor_id: doctor.doctor_id,
+      diagnosis: rxDraft.diagnosis.trim() || null,
+      // No DB column for vitals/advice yet, so they ride along in the
+      // consultation note until the schema has a home for them.
+      transcript: [
+        observations && `Vitals — ${observations}`,
+        vitals.advice.trim() && `Advice: ${vitals.advice.trim()}`,
+      ]
+        .filter(Boolean)
+        .join('\n') || null,
+      case_paper_url: null,
+      lab_test: null,
+      approve,
+      next_checkup_date: followUp.date || null,
+      next_checkup_time: followUp.time || null,
+      medicines: rxDraft.medicines.map((item) => ({
+        medicine_id: item.medicine_id,
+        name: item.name,
+        dosage: item.dosage,
+        timings: item.timings,
+        duration_days: item.duration_days ?? null,
+        timing_slot:
+          timingSlots.find(
+            (slot) => slot.toLowerCase() === (item.timings ?? '').toLowerCase(),
+          ) ?? null,
+      })),
     }
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault()
-    if (!transcript.trim() && items.length === 0) {
-      setError('Add a transcript or at least one medicine before submitting.')
+  async function submit(approve) {
+    if (!rxDraft.diagnosis.trim() && rxDraft.medicines.length === 0) {
+      setError('Add a diagnosis or at least one medicine before submitting.')
       return
     }
 
     setError('')
     setSubmitting(true)
     try {
-      const observations = [vitals.bp && `BP ${vitals.bp}`, vitals.spo2 && `SpO2 ${vitals.spo2}`]
-        .filter(Boolean)
-        .join(', ')
-
-      await addPrescription({
-        patient_id: patient.patient_id,
-        doctor_id: doctor.doctor_id,
-        // No DB column for vitals/advice yet, so they ride along in the
-        // consultation note until the schema has a home for them.
-        transcript: [
-          transcript.trim(),
-          observations && `Vitals — ${observations}`,
-          vitals.advice.trim() && `Advice: ${vitals.advice.trim()}`,
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        case_paper_url: null,
-        lab_test: null,
-        medicines: items.map((item) => ({
-          medicine_id: item.medicine_id,
-          name: item.name,
-          dosage: item.dosage,
-          timings: item.timings,
-          timing_slot:
-            timingSlots.find(
-              (slot) => slot.toLowerCase() === (item.timings ?? '').toLowerCase(),
-            ) ?? null,
-        })),
-      })
+      await addPrescription(buildPayload(approve))
       navigate('/prescriptions')
     } catch (err) {
       setError(`Could not save the prescription: ${err.message}`)
@@ -313,8 +346,42 @@ export default function NewPrescription() {
     }
   }
 
+  async function runInteractionCheck() {
+    if (rxDraft.medicines.length === 0) {
+      setError('Add at least one medicine before checking interactions.')
+      return
+    }
+
+    setError('')
+    setChecking(true)
+    try {
+      setInteractionResult(
+        await checkInteractions({
+          patient_id: patient.patient_id,
+          medicines: rxDraft.medicines.map((item) => ({
+            medicine_id: item.medicine_id,
+            name: item.name,
+            dosage: item.dosage,
+            timings: item.timings,
+            duration_days: item.duration_days ?? null,
+          })),
+        }),
+      )
+    } catch (err) {
+      setError(`Could not check interactions: ${err.message}`)
+    } finally {
+      setChecking(false)
+    }
+  }
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        submit(false)
+      }}
+      className="space-y-6"
+    >
       <Link
         to={`/patients/${patient.patient_id}`}
         className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-slate-800"
@@ -342,12 +409,12 @@ export default function NewPrescription() {
         )}
       </div>
 
-      {/* Both entry points feed the same draft: photo of the case paper, or
-          chat / voice with the assistant. */}
+      {/* Upload a photo of the case paper; the floating assistant can also
+          fill the draft below. */}
       <SectionCard title="Capture the prescription">
         <p className="mb-3 text-xs text-slate-500">
-          Upload the case paper, or tell the assistant what to add — both fill the same
-          prescription below.
+          Upload the case paper — medicines, vitals and diagnosis are filled in below for
+          review.
         </p>
 
         <label
@@ -392,65 +459,6 @@ export default function NewPrescription() {
           </p>
         )}
 
-        <div className="my-4 flex items-center gap-3">
-          <span className="h-px flex-1 bg-slate-200" />
-          <span className="text-xs font-medium uppercase tracking-wider text-slate-400">
-            or ask
-          </span>
-          <span className="h-px flex-1 bg-slate-200" />
-        </div>
-
-        {chatMessages.length > 0 && (
-          <ul className="mb-3 space-y-2">
-            {chatMessages.map((message, index) => (
-              <li
-                key={index}
-                className={`rounded-xl px-3.5 py-2.5 text-sm ${
-                  message.role === 'user'
-                    ? 'ml-8 bg-brand-50 text-brand-900'
-                    : message.error
-                      ? 'mr-8 bg-rose-50 text-rose-700'
-                      : 'mr-8 bg-slate-100 text-slate-700'
-                }`}
-              >
-                {message.text}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div className="flex gap-2">
-          <input
-            className="field"
-            placeholder='Say or type: "add Amoxicillin 500 mg TDS for 5 days"'
-            value={chatInput}
-            disabled={chatting}
-            onChange={(event) => setChatInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') sendChat(event)
-            }}
-          />
-          <Button
-            type="button"
-            variant={listening === 'chat' ? 'danger' : 'ghost'}
-            onClick={() => startDictation('chat')}
-            title="Dictate your instruction"
-          >
-            {listening === 'chat' ? <Square size={15} /> : <Mic size={15} />}
-          </Button>
-          <Button
-            type="button"
-            loading={chatting}
-            disabled={chatting || !chatInput.trim()}
-            onClick={sendChat}
-          >
-            <Send size={15} /> Send
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-slate-400">
-          The assistant adds, changes or removes medicines by text or voice. Voice uses the
-          browser&apos;s microphone; the AI key must be configured.
-        </p>
       </SectionCard>
 
       <SectionCard title="Vitals, medicines & advice">
@@ -483,20 +491,30 @@ export default function NewPrescription() {
 
         <div className="my-4 border-t border-slate-100" />
 
-        <div className="grid gap-3 sm:grid-cols-[1.5fr_1fr_1.5fr_auto]">
-          <select
-            className="field"
-            value={draft.medicine_id}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, medicine_id: event.target.value }))
-            }
-          >
-            {medicines.map((medicine) => (
-              <option key={medicine.id} value={medicine.id}>
-                {medicine.name} · {medicine.brand}
-              </option>
-            ))}
-          </select>
+        <div className="grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr_0.7fr_auto]">
+          {draft.medicine_id === 'new' ? (
+            <input
+              className="field"
+              placeholder="New medicine name"
+              value={newMedicineName}
+              onChange={(event) => setNewMedicineName(event.target.value)}
+            />
+          ) : (
+            <select
+              className="field"
+              value={draft.medicine_id}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, medicine_id: event.target.value }))
+              }
+            >
+              <option value="new">+ Add new medicine…</option>
+              {medicines.map((medicine) => (
+                <option key={medicine.id} value={medicine.id}>
+                  {medicine.name} · {medicine.brand}
+                </option>
+              ))}
+            </select>
+          )}
           <input
             className="field"
             placeholder="Dosage"
@@ -518,36 +536,172 @@ export default function NewPrescription() {
               </option>
             ))}
           </select>
-          <Button type="button" variant="subtle" onClick={addItem}>
+          <input
+            className="field"
+            type="number"
+            min="1"
+            placeholder="Days"
+            value={draft.days}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, days: event.target.value }))
+            }
+          />
+          <Button
+            type="button"
+            variant="subtle"
+            onClick={addItem}
+            disabled={
+              draft.medicine_id === 'new' ? !newMedicineName.trim() : !draft.medicine_id
+            }
+          >
             <Plus size={16} /> Add
           </Button>
         </div>
 
-        {items.length > 0 && (
-          <ul className="mt-4 divide-y divide-slate-100">
-            {items.map((item, index) => (
-              <li
-                key={`${item.medicine_id ?? item.name}-${index}`}
-                className="flex items-center justify-between py-2.5"
-              >
-                <div>
-                  <p className="text-sm font-medium text-slate-800">{item.name}</p>
-                  <p className="text-xs text-slate-500">
-                    {item.dosage} · {item.timings}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setItems((prev) => prev.filter((_, i) => i !== index))}
-                  className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
-                  aria-label={`Remove ${item.name}`}
-                >
-                  <Trash2 size={16} />
-                </button>
-              </li>
-            ))}
-          </ul>
+        {rxDraft.medicines.length > 0 && (
+          <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[520px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+                  <th className="px-3 py-2 font-medium">Medicine</th>
+                  <th className="px-3 py-2 font-medium">Dosage</th>
+                  <th className="px-3 py-2 font-medium">Frequency</th>
+                  <th className="px-3 py-2 font-medium">Days</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rxDraft.medicines.map((item, index) => (
+                  <tr key={`${item.medicine_id ?? item.name}-${index}`}>
+                    <td className="px-3 py-2">
+                      <EditableCell
+                        className="font-medium text-slate-800"
+                        value={item.name}
+                        onChange={(raw) => {
+                          const name = raw.trim()
+                          if (name) updateItem(index, { name })
+                        }}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <EditableCell
+                        className="text-slate-600"
+                        value={item.dosage}
+                        onChange={(raw) => updateItem(index, { dosage: raw.trim() })}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <EditableCell
+                        className="text-slate-600"
+                        value={item.timings}
+                        onChange={(raw) => updateItem(index, { timings: raw.trim() })}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <EditableCell
+                        className="text-slate-600"
+                        type="number"
+                        value={item.duration_days}
+                        onChange={(raw) => {
+                          const trimmed = raw.trim()
+                          const days = trimmed === '' ? null : Number(trimmed)
+                          updateItem(index, {
+                            duration_days: Number.isFinite(days) ? days : null,
+                          })
+                        }}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setRxDraft((current) => ({
+                            ...current,
+                            medicines: current.medicines.filter((_, i) => i !== index),
+                          }))
+                        }
+                        className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                        aria-label={`Remove ${item.name}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+
+        <div className="mt-5 border-t border-slate-100 pt-4">
+          <span className="mb-2 block text-xs font-medium text-slate-500">
+            Next follow-up
+          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="date"
+              className="field w-44"
+              min={todayIso()}
+              value={followUp.date}
+              onChange={(event) =>
+                setFollowUp((current) => ({
+                  ...current,
+                  date: event.target.value,
+                  time: '',
+                }))
+              }
+            />
+            {followUp.time && (
+              <span className="text-xs text-slate-500">
+                Slot: {formatTime(followUp.time)}
+              </span>
+            )}
+          </div>
+
+          {followUp.date && (
+            <div className="mt-3">
+              {slotsState === 'loading' && (
+                <p className="inline-flex items-center gap-1.5 text-xs text-slate-400">
+                  <Loader2 size={13} className="animate-spin" /> Checking availability…
+                </p>
+              )}
+
+              {slotsState === 'error' && (
+                <p className="text-xs text-rose-600">Could not load availability.</p>
+              )}
+
+              {slotsState === 'ready' && availableSlots.length === 0 && (
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  No free slots on {formatLongDate(followUp.date)}. Try another day.
+                </p>
+              )}
+
+              {slotsState === 'ready' && availableSlots.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {availableSlots.map((slot) => {
+                    const active = slot === followUp.time
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() =>
+                          setFollowUp((current) => ({ ...current, time: slot }))
+                        }
+                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                          active
+                            ? 'border-brand-600 bg-brand-600 text-white'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
+                        }`}
+                      >
+                        {formatTime(slot)}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         <div className="mt-5 border-t border-slate-100 pt-4">
           <label className="block">
@@ -564,53 +718,96 @@ export default function NewPrescription() {
               }
             />
           </label>
-          <p className="mt-2 text-xs text-slate-400">
-            BP, SpO₂ and advice are read from the case paper on upload. Carried into the
-            consultation note; the database has no dedicated column for them yet.
-          </p>
         </div>
       </SectionCard>
 
-      <SectionCard title="Consultation transcript">
+      <SectionCard title="Symptoms & diagnosis">
         <textarea
-          rows={5}
+          rows={4}
           className="field resize-none"
-          placeholder="Type or dictate the consultation notes…"
-          value={transcript}
-          onChange={(event) => setTranscript(event.target.value)}
+          placeholder="Symptoms, diagnosed condition, or any clinical detail…"
+          value={rxDraft.diagnosis}
+          onChange={(event) =>
+            setRxDraft((current) => ({ ...current, diagnosis: event.target.value }))
+          }
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Button
             type="button"
-            variant={listening === 'transcript' ? 'danger' : 'ghost'}
+            variant={dictating ? 'danger' : 'ghost'}
             size="sm"
-            onClick={() => startDictation('transcript')}
+            onClick={() => (dictating ? stopDiagnosisDictation() : startDiagnosisDictation())}
           >
-            {listening === 'transcript' ? (
+            {dictating ? (
               <>
                 <Square size={14} /> Stop dictation
               </>
             ) : (
               <>
-                <Mic size={15} /> Dictate notes
+                <Mic size={15} /> Dictate
               </>
             )}
           </Button>
-          {listening === 'transcript' && (
+          {dictating && (
             <span className="text-xs font-medium text-rose-600">Listening…</span>
           )}
-          {notice && <span className="text-xs text-slate-500">{notice}</span>}
         </div>
+        {dictationNotice && (
+          <p className="mt-2 text-xs font-medium text-rose-600">{dictationNotice}</p>
+        )}
+        <p className="mt-2 text-xs text-slate-400">
+          You can also ask the assistant (bottom-right) to fill this in — e.g. “set the
+          diagnosis to anxiety”.
+        </p>
       </SectionCard>
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
 
-      <div className="flex justify-end gap-3">
+      {interactionResult && (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          {interactionResult.warnings.length > 0 ? (
+            <>
+              <p className="flex items-center gap-2 text-sm font-semibold text-rose-700">
+                <AlertTriangle size={16} /> Drug interaction & allergy warnings
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-rose-700">
+                {interactionResult.warnings.map((warning, index) => (
+                  <li key={index}>{warning}</li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="flex items-center gap-2 text-sm text-slate-600">
+              <Check size={16} className="text-emerald-600" />
+              {interactionResult.interaction_note ?? 'No interactions found.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={runInteractionCheck}
+          loading={checking}
+          disabled={checking || rxDraft.medicines.length === 0}
+        >
+          <AlertTriangle size={15} /> Check drug interactions
+        </Button>
         <Button type="button" variant="ghost" as={Link} to={`/patients/${patient.patient_id}`}>
           Cancel
         </Button>
-        <Button type="submit" loading={submitting} disabled={submitting}>
-          {submitting ? 'Saving…' : 'Submit for review'}
+        <Button type="submit" variant="subtle" loading={submitting} disabled={submitting}>
+          {submitting ? 'Saving…' : 'Review'}
+        </Button>
+        <Button
+          type="button"
+          loading={submitting}
+          disabled={submitting}
+          onClick={() => submit(true)}
+        >
+          Review & Approve
         </Button>
       </div>
     </form>

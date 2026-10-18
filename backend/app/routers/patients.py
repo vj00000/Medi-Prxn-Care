@@ -1,7 +1,6 @@
 """Patient reads, family groupings, and the joins the portals render."""
 
 from datetime import date
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -17,12 +16,15 @@ from app.doses import (
     taken_on,
     undo_dose,
 )
+from app.family_code import qr_token_for, unique_code
+from app.interactions import MAX_WARNING_CHARS, find_interactions
 from app.models import Family, MedicationSchedule, Patient, PatientDisease
 from app.schemas import (
     DiseaseOut,
     DoseTakenOut,
     FamilyHistoryOut,
     FamilyMemberCreate,
+    InteractionCheckOut,
     LowStockOut,
     PatientOut,
     ScheduleOut,
@@ -38,6 +40,7 @@ _BASE = select(Patient).options(
         MedicationSchedule.prescription
     ),
     selectinload(Patient.visits),
+    selectinload(Patient.family),
 )
 
 # Display order inside a family.
@@ -96,6 +99,7 @@ def _to_out(
         phone=patient.phone,
         qr_token=patient.qr_token,
         family_id=patient.family_id,
+        family_code=patient.family.code if patient.family is not None else None,
         relation=patient.relation,
         allergies=allergy_terms(patient),
         diseases=[
@@ -160,6 +164,11 @@ def add_family_member(payload: FamilyMemberCreate, db: Session = Depends(get_db)
             detail="relation must be one of: father, mother, other",
         )
 
+    # Older households may predate the code, and the token is built from it.
+    if not family.code:
+        family.code = unique_code(db)
+        db.flush()
+
     member = Patient(
         name=payload.name.strip(),
         age=payload.age,
@@ -168,9 +177,11 @@ def add_family_member(payload: FamilyMemberCreate, db: Session = Depends(get_db)
         phone=payload.phone,
         allergies=payload.allergies or "None reported",
         family_id=family.family_id,
-        qr_token=f"QR-{uuid4().hex[:12].upper()}",
     )
     db.add(member)
+    # The token includes the patient number, which only exists after the flush.
+    db.flush()
+    member.qr_token = qr_token_for(family.code, member.patient_id)
     db.commit()
     db.refresh(member)
     return _to_out(member, viewer_id=member.patient_id, db=db)
@@ -262,3 +273,40 @@ def get_low_stock(patient_id: int, db: Session = Depends(get_db)):
         )
         for row in low_stock_rows(db, patient_id)
     ]
+
+
+@router.get("/{patient_id}/interactions", response_model=InteractionCheckOut)
+def get_patient_interactions(patient_id: int, db: Session = Depends(get_db)):
+    """Known interactions among the patient's own active medicines."""
+    patient = db.get(Patient, patient_id)
+    if patient is None:
+        raise HTTPException(
+            status_code=404, detail=f"Patient {patient_id} not found"
+        )
+
+    active = db.scalars(
+        select(MedicationSchedule.medicine_name)
+        .where(
+            MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.is_expired.is_(False),
+        )
+        .distinct()
+    ).all()
+
+    interactions = find_interactions([], list(active))
+    warnings: list[str] = []
+    for interaction in interactions:
+        a, b = interaction.drugs
+        note = interaction.warning
+        if len(note) > MAX_WARNING_CHARS:
+            note = note[: MAX_WARNING_CHARS - 1].rstrip() + "\u2026"
+        warnings.append(f"Possible interaction {a} + {b}: {note}")
+
+    if not active:
+        note = "No active medicines to check."
+    elif not warnings:
+        note = "No known interactions among your current medicines."
+    else:
+        note = None
+
+    return InteractionCheckOut(warnings=warnings, interaction_note=note)

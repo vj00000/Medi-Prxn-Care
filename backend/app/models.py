@@ -45,6 +45,9 @@ class Doctor(Base):
     specialization: Mapped[Optional[str]] = mapped_column(String(100))
     contact_number: Mapped[Optional[str]] = mapped_column(String(20))
     gender: Mapped[Optional[str]] = mapped_column(String(20))
+    # Onboarding / sign-in.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
     # Consulting-slot length used when generating bookable times.
     slot_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
 
@@ -83,6 +86,9 @@ class Family(Base):
 
     family_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Public identifier used in patient QR tokens. The integer family_id stays
+    # the key; this is the value that is shown on screen and typed by hand.
+    code: Mapped[Optional[str]] = mapped_column(String(5), unique=True, index=True)
 
     members: Mapped[List["Patient"]] = relationship(back_populates="family")
 
@@ -100,6 +106,9 @@ class Patient(Base):
     allergies: Mapped[Optional[str]] = mapped_column(Text)
     qr_token: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(20))
+    # Onboarding / sign-in.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
     family_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("families.family_id", ondelete="SET NULL")
     )
@@ -235,6 +244,8 @@ class Prescription(Base):
     # Wall-clock slot on that date. Null means the patient picked a day only.
     next_checkup_time: Mapped[Optional[time]] = mapped_column(Time)
     transcript: Mapped[Optional[str]] = mapped_column(Text)
+    # Symptoms, working diagnosis, or other clinical detail for this visit.
+    diagnosis: Mapped[Optional[str]] = mapped_column(Text)
     case_paper_url: Mapped[Optional[str]] = mapped_column(String(500))
     status: Mapped[PrescriptionStatus] = mapped_column(
         Enum(
@@ -246,6 +257,13 @@ class Prescription(Base):
         ),
         default=PrescriptionStatus.review,
         nullable=False,
+    )
+    # Who authored this prescription: "doctor" or "patient" (self-reported).
+    created_by: Mapped[str] = mapped_column(String(20), default="doctor", nullable=False)
+    # Direct link to the patient. Doctor prescriptions set this too; the visit
+    # still carries the doctor and appointment details.
+    patient_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("patients.patient_id", ondelete="CASCADE"), nullable=True
     )
     lab_test_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("lab_tests.test_id", ondelete="SET NULL")

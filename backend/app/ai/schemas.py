@@ -20,6 +20,7 @@ class PrescriptionDraft(BaseModel):
     patient_name: str | None = None
     patient_age: str | None = None
     diagnosis: str | None = None
+    symptoms: str | None = None
     lab_tests: list[str] = Field(default_factory=list)
     medicines: list[ExtractedMedicine] = Field(default_factory=list)
 

@@ -5,9 +5,21 @@ the whitelisted tools in `app.ai.draft`. That keeps the doctor in control.
 """
 
 import google.generativeai as genai
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.ai.client import get_model
 from app.ai.draft import apply_tool
+from app.clinical import allergy_terms
+from app.models import (
+    Disease,
+    FamilyMedicalHistory,
+    LabTest,
+    Patient,
+    PatientDisease,
+    PatientDoctorVisit,
+    Prescription,
+)
 from app.schemas import DraftState
 
 _Schema = genai.protos.Schema
@@ -26,6 +38,10 @@ SYSTEM_INSTRUCTION = """You are a prescribing assistant for a licensed doctor.
 
 You may ONLY change the prescription by calling the provided tools. Never state a
 dosage or medicine that you have not written with a tool call.
+
+You may also answer questions about the patient's record (diseases, family
+history, prescriptions, lab tests) when a PATIENT RECORD is supplied — answer
+strictly from that record, never invent.
 
 Rules:
 - Prefer one tool call per medicine the doctor mentions.
@@ -78,6 +94,77 @@ TOOLS = [
 ]
 
 
+def _patient_record(db: Session, patient_id: int) -> str:
+    """A compact text summary of one patient's record for the assistant."""
+    patient = db.get(Patient, patient_id)
+    if patient is None:
+        return ""
+
+    lines = [
+        f"Name: {patient.name}",
+        f"Age: {patient.age}",
+        f"Gender: {patient.gender}",
+    ]
+
+    allergies = allergy_terms(patient)
+    if allergies:
+        lines.append("Allergies: " + ", ".join(allergies))
+
+    diseases = db.scalars(
+        select(Disease.name)
+        .join(PatientDisease, PatientDisease.disease_id == Disease.id)
+        .where(PatientDisease.patient_id == patient_id)
+        .order_by(Disease.name)
+    ).all()
+    lines.append("Diseases: " + (", ".join(diseases) if diseases else "(none)"))
+
+    family = db.scalars(
+        select(FamilyMedicalHistory).where(
+            FamilyMedicalHistory.patient_id == patient_id
+        )
+    ).all()
+    if family:
+        lines.append("Family history:")
+        for entry in family:
+            detail = f" ({entry.additional_notes})" if entry.additional_notes else ""
+            lines.append(f"  - {entry.relation}: {entry.condition_name}{detail}")
+
+    prescriptions = db.scalars(
+        select(Prescription)
+        .join(
+            PatientDoctorVisit,
+            PatientDoctorVisit.prescription_id == Prescription.prescription_id,
+        )
+        .where(PatientDoctorVisit.patient_id == patient_id)
+        .order_by(Prescription.prescription_id.desc())
+    ).all()
+
+    if prescriptions:
+        lines.append("Prescriptions:")
+        for rx in prescriptions:
+            medicines = []
+            for link in rx.medicines:
+                name = link.medicine.name if link.medicine else "?"
+                medicines.append(
+                    " ".join(part for part in (name, link.medicine_dosage) if part)
+                )
+            lab = db.get(LabTest, rx.lab_test_id) if rx.lab_test_id else None
+            parts = [rx.status.value]
+            if rx.diagnosis:
+                parts.append(f"diagnosis: {rx.diagnosis}")
+            if medicines:
+                parts.append("medicines: " + ", ".join(medicines))
+            if lab:
+                parts.append(f"lab test: {lab.test_name}")
+            if rx.next_checkup_date:
+                parts.append(f"next checkup: {rx.next_checkup_date}")
+            lines.append(f"  - {rx.created_on} · " + " · ".join(parts))
+    else:
+        lines.append("Prescriptions: (none)")
+
+    return "\n".join(lines)
+
+
 def _render(draft: DraftState) -> str:
     lines: list[str] = []
     if draft.diagnosis:
@@ -97,7 +184,12 @@ def _render(draft: DraftState) -> str:
 
 
 async def chat_with_draft(
-    draft: DraftState, message: str, history: list
+    draft: DraftState,
+    message: str,
+    history: list,
+    *,
+    db: Session | None = None,
+    patient_id: int | None = None,
 ) -> tuple[DraftState, str, list[str]]:
     model = get_model()
 
@@ -109,20 +201,21 @@ async def chat_with_draft(
                 "parts": [{"text": turn.text}],
             }
         )
-    contents.append(
-        {
-            "role": "user",
-            "parts": [
-                {
-                    "text": (
-                        f"{SYSTEM_INSTRUCTION}\n\n"
-                        f"Current prescription draft:\n{_render(draft)}\n\n"
-                        f"Doctor says: {message}"
-                    )
-                }
-            ],
-        }
+    prompt = SYSTEM_INSTRUCTION
+    if db is not None and patient_id is not None:
+        record = _patient_record(db, patient_id)
+        if record:
+            prompt += (
+                f"\n\nPATIENT RECORD:\n{record}\n\n"
+                "Answer questions about this patient's diseases, family history, "
+                "prescriptions and lab tests from the record above."
+            )
+    prompt += (
+        f"\n\nCurrent prescription draft:\n{_render(draft)}\n\n"
+        f"Doctor says: {message}"
     )
+
+    contents.append({"role": "user", "parts": [{"text": prompt}]})
 
     response = await model.generate_content_async(
         contents,

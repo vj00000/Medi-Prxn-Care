@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { useApp } from '../store/AppStore'
 import { markDoseTaken, untakeDose } from '../lib/api'
-import { CURRENT_PATIENT_ID, checkupHour, dueDoses, todayIso } from './patientData'
+import { checkupHour, dueDoses, todayIso } from './patientData'
 
 const DoseContext = createContext(null)
 
@@ -38,8 +38,8 @@ function loadDismissedCheckups() {
  * `taken_at`, so this context only needs to trigger a refresh.
  */
 export function DoseProvider({ children }) {
-  const { patients, prescriptions, refreshFamily } = useApp()
-  const selected = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
+  const { patients, prescriptions, refreshFamily, patientId } = useApp()
+  const selected = patients.find((p) => p.patient_id === patientId)
   const schedules = selected?.schedules ?? []
 
   /** schedule id -> taken_at, built from the server's own record. */
@@ -72,20 +72,20 @@ export function DoseProvider({ children }) {
     const today = todayIso(now)
     const due = prescriptions.find(
       (rx) =>
-        rx.patient_id === CURRENT_PATIENT_ID && rx.next_checkup_date === today,
+        rx.patient_id === patientId && rx.next_checkup_date === today,
     )
     if (!due || dismissedCheckups[today]) return null
     // With a slot time, stay quiet until the appointment hour arrives.
     const hour = checkupHour(due.next_checkup_time)
     return hour !== undefined && now.getHours() < hour ? null : due
-  }, [prescriptions, dismissedCheckups])
+  }, [prescriptions, dismissedCheckups, patientId])
 
   const markTaken = useCallback(
     async (id) => {
       setRinging((current) => (current?.id === id ? null : current))
       setBusy((prev) => ({ ...prev, [id]: true }))
       try {
-        await markDoseTaken(CURRENT_PATIENT_ID, id)
+        await markDoseTaken(patientId, id)
         // Refetch so stock and taken_today come from the server, not a guess.
         await refreshFamily()
       } finally {
@@ -96,14 +96,14 @@ export function DoseProvider({ children }) {
         })
       }
     },
-    [refreshFamily],
+    [refreshFamily, patientId],
   )
 
   const untake = useCallback(
     async (id) => {
       setBusy((prev) => ({ ...prev, [id]: true }))
       try {
-        await untakeDose(CURRENT_PATIENT_ID, id)
+        await untakeDose(patientId, id)
         await refreshFamily()
       } finally {
         setBusy((prev) => {
@@ -113,7 +113,7 @@ export function DoseProvider({ children }) {
         })
       }
     },
-    [refreshFamily],
+    [refreshFamily, patientId],
   )
 
   const dismissAlarm = useCallback(() => setRinging(null), [])

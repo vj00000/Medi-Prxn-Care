@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from sqlalchemy import func, select
 
 from app.database import Base, SessionLocal, engine
+from app.security import hash_password
 from app.models import (
     Disease,
     Doctor,
@@ -43,6 +44,36 @@ TABLE_MODELS = [
     ("lab_tests", LabTest),
 ]
 
+# Demo sign-in accounts handed to the hackathon judges. Written idempotently so
+# a database seeded before credentials existed still receives them.
+DEMO_CREDENTIALS = {
+    "doctor": [
+        ("Dr. Ananya Sharma", "dr.ananya@demo.com", "doctor123"),
+        ("Dr. Rohan Mehta", "dr.rohan@demo.com", "doctor123"),
+    ],
+    "patient": [
+        ("Vikram Rao", "vikram@demo.com", "patient123"),
+        ("Meera Nair", "meera@demo.com", "patient123"),
+    ],
+}
+
+
+def _ensure_demo_credentials(db) -> None:
+    """Attach (or refresh) sign-in credentials on the seeded demo accounts."""
+    for name, email, password in DEMO_CREDENTIALS["doctor"]:
+        doctor = db.scalar(select(Doctor).where(Doctor.name == name))
+        if doctor is not None:
+            doctor.email = email
+            doctor.password_hash = hash_password(password)
+            print(f"  credentials: {name} -> {email}")
+
+    for name, email, password in DEMO_CREDENTIALS["patient"]:
+        patient = db.scalar(select(Patient).where(Patient.name == name))
+        if patient is not None:
+            patient.email = email
+            patient.password_hash = hash_password(password)
+            print(f"  credentials: {name} -> {email}")
+
 
 def print_counts(db) -> None:
     print("Row counts:")
@@ -56,7 +87,9 @@ def seed() -> None:
     db = SessionLocal()
     try:
         if db.scalar(select(Doctor).limit(1)) is not None:
-            print("Database already seeded - skipping insert.")
+            print("Database already seeded - ensuring demo credentials.")
+            _ensure_demo_credentials(db)
+            db.commit()
             print_counts(db)
             return
 
@@ -67,12 +100,16 @@ def seed() -> None:
                 specialization="Cardiologist",
                 contact_number="+91-9876543210",
                 gender="female",
+                email="dr.ananya@demo.com",
+                password_hash=hash_password("doctor123"),
             ),
             Doctor(
                 name="Dr. Rohan Mehta",
                 specialization="Endocrinologist",
                 contact_number="+91-9812345678",
                 gender="male",
+                email="dr.rohan@demo.com",
+                password_hash=hash_password("doctor123"),
             ),
         ]
         patients = [
@@ -83,6 +120,8 @@ def seed() -> None:
                 allergies="Penicillin, Sulfa drugs",
                 qr_token="QR-VIKRAM-0001",
                 phone="+91-90000-11111",
+                email="vikram@demo.com",
+                password_hash=hash_password("patient123"),
             ),
             Patient(
                 name="Meera Nair",
@@ -91,6 +130,8 @@ def seed() -> None:
                 allergies="None reported",
                 qr_token="QR-MEERA-0002",
                 phone="+91-90000-22222",
+                email="meera@demo.com",
+                password_hash=hash_password("patient123"),
             ),
         ]
         medicines = [

@@ -19,6 +19,7 @@ Return STRICT JSON with exactly this shape:
   "patient_name": string|null,
   "patient_age": string|null,
   "diagnosis": string|null,
+  "symptoms": string|null,
   "lab_tests": [string],
   "bp": string|null,
   "spo2": string|null,
@@ -40,6 +41,9 @@ Return STRICT JSON with exactly this shape:
 Rules:
 - NEVER invent a medicine, dosage, reading or advice. If something is not
   written on the paper, use null. Missing values are expected and fine.
+- "diagnosis" = the diagnosed condition or disease, e.g. "type 2 diabetes".
+- "symptoms" = the symptoms the patient reported, e.g. "fever, body ache".
+  Leave null when the paper has no symptoms.
 - "bp" = the blood pressure reading exactly as written, e.g. "130/85 mmHg".
 - "spo2" = oxygen saturation, e.g. "98%".
 - "advice" = ALL general advice written on the paper, gathered into ONE string.
@@ -64,6 +68,7 @@ def parse_draft(payload: dict) -> PrescriptionDraft:
         patient_name=payload.get("patient_name"),
         patient_age=payload.get("patient_age"),
         diagnosis=payload.get("diagnosis"),
+        symptoms=payload.get("symptoms"),
         lab_tests=payload.get("lab_tests") or [],
         bp=payload.get("bp"),
         spo2=payload.get("spo2"),

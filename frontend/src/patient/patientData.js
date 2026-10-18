@@ -1,11 +1,9 @@
 /**
  * Patient-portal data helpers.
  *
- * The portal is scoped to a single signed-in patient, so every page resolves
- * "me" through CURRENT_PATIENT_ID rather than trusting a route parameter.
+ * The signed-in patient's id comes from the session (AppStore.patientId), so
+ * pages resolve "me" through that value rather than trusting a route parameter.
  */
-
-export const CURRENT_PATIENT_ID = 1
 
 /** How many days before a supply runs out a medicine is flagged to reorder. */
 export const REORDER_WINDOW_DAYS = 5

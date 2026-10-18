@@ -3,15 +3,14 @@ import { Phone } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import SectionCard from '../../components/SectionCard'
 import Badge from '../../components/Badge'
-import { CURRENT_PATIENT_ID } from '../patientData'
 
 function initials(name) {
   return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
 }
 
 export default function Profile() {
-  const { patients, loading } = useApp()
-  const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
+  const { patients, loading, patientId } = useApp()
+  const patient = patients.find((p) => p.patient_id === patientId)
 
   if (loading) {
     return <p className="px-1 text-sm text-slate-400">Loading your profile…</p>
@@ -40,8 +39,15 @@ export default function Profile() {
 
       <SectionCard title="My health QR">
         <div className="flex flex-col items-center gap-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4">
-            <QRCodeSVG value={patient.qr_token} size={148} fgColor="#0f766e" />
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <QRCodeSVG
+              value={JSON.stringify({
+                patient_family_id: patient.family_id,
+                patient_id: patient.patient_id,
+              })}
+              size={200}
+              fgColor="#0f766e"
+            />
           </div>
           <p className="text-center text-xs text-slate-500">
             Show this to your doctor to share your record instantly.

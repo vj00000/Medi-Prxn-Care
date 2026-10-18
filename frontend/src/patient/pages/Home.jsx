@@ -18,7 +18,7 @@ import Badge from '../../components/Badge'
 import Button from '../../components/Button'
 import AddFamilyMember from '../components/AddFamilyMember'
 import BookAppointment from '../components/BookAppointment'
-import { CURRENT_PATIENT_ID, formatCheckup } from '../patientData'
+import { formatCheckup } from '../patientData'
 import { getLowStock } from '../../lib/api'
 
 const RELATION_LABEL = {
@@ -33,11 +33,12 @@ function initials(name) {
 }
 
 export default function Home() {
-  const { family, loading, doctor, prescriptions, addMember, setCheckupDate } = useApp()
+  const { family, loading, doctor, prescriptions, addMember, setCheckupDate, patientId } =
+    useApp()
   const { taken, busy, markTaken, untake } = useDoses()
   const { add: addToCart, count } = useCart()
 
-  const [selectedId, setSelectedId] = useState(CURRENT_PATIENT_ID)
+  const [selectedId, setSelectedId] = useState(patientId)
   const [adding, setAdding] = useState(false)
   const [booking, setBooking] = useState(false)
   const [lowStock, setLowStock] = useState([])
@@ -46,7 +47,7 @@ export default function Home() {
   // down — also refreshes what is running out.
   useEffect(() => {
     let cancelled = false
-    getLowStock(CURRENT_PATIENT_ID)
+    getLowStock(patientId)
       .then((rows) => {
         if (!cancelled) setLowStock(rows)
       })
@@ -56,7 +57,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [family])
+  }, [family, patientId])
 
   if (loading) {
     return <p className="px-1 text-sm text-slate-400">Loading your family…</p>
@@ -66,9 +67,9 @@ export default function Home() {
   }
 
   const selected = family.find((m) => m.patient_id === selectedId) ?? family[0]
-  const isSelf = selected.patient_id === CURRENT_PATIENT_ID
+  const isSelf = selected.patient_id === patientId
 
-  const mine = prescriptions.filter((rx) => rx.patient_id === CURRENT_PATIENT_ID)
+  const mine = prescriptions.filter((rx) => rx.patient_id === patientId)
   const nextCheckup = mine
     .filter((rx) => rx.next_checkup_date)
     .sort((a, b) => a.next_checkup_date.localeCompare(b.next_checkup_date))[0]
@@ -140,7 +141,16 @@ export default function Home() {
           )}
         </div>
 
-        {selected.phone && <p className="mt-3 text-xs text-slate-500">{selected.phone}</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {selected.family_code && (
+            <span className="rounded-lg bg-slate-100 px-2 py-1 font-mono text-[11px] font-medium tracking-wide text-slate-600">
+              {selected.family_code}
+            </span>
+          )}
+          {selected.phone && (
+            <span className="text-xs text-slate-500">{selected.phone}</span>
+          )}
+        </div>
 
         {selected.allergies.length > 0 && (
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3">

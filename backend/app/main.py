@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.routers import ai as ai_router
+from app.routers import auth as auth_router
 from app.routers import catalog as catalog_router
 from app.routers import patients as patients_router
 from app.routers import prescriptions as prescriptions_router
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(ai_router.router)
+app.include_router(auth_router.router)
 app.include_router(catalog_router.router)
 app.include_router(patients_router.router)
 app.include_router(prescriptions_router.router)
@@ -34,7 +36,7 @@ app.include_router(prescriptions_router.router)
 
 @app.get("/", tags=["health"])
 def root():
-    return {"status": "ok", "service": "smart-rx-backend"}
+    return {"status": "ok", "service": "medi-prxn-care-backend"}
 
 
 @app.get("/health", tags=["health"])

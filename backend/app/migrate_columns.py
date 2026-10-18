@@ -14,14 +14,16 @@ from sqlalchemy import select, text
 
 from app.availability import ensure_default_windows
 from app.database import SessionLocal
-from app.models import Doctor, MedicationSchedule, MedicineStock
+from app.family_code import qr_token_for, unique_code
+from app.models import Doctor, Family, MedicationSchedule, MedicineStock, Patient
 
 # Created before the ALTERs below, which reference it.
 CREATE_TABLES = [
     """
     CREATE TABLE IF NOT EXISTS families (
         family_id SERIAL PRIMARY KEY,
-        name      VARCHAR(100) NOT NULL
+        name      VARCHAR(100) NOT NULL,
+        code      VARCHAR(5) UNIQUE
     )
     """,
     # Weekly consulting windows, used to generate the slots a patient may book.
@@ -72,6 +74,11 @@ ADD_COLUMNS = [
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_date DATE",
     "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS next_checkup_time TIME",
     "ALTER TABLE doctors ADD COLUMN IF NOT EXISTS slot_minutes INTEGER NOT NULL DEFAULT 30",
+    # Third revision: public five-character family code, used in QR tokens.
+    "ALTER TABLE families ADD COLUMN IF NOT EXISTS code VARCHAR(5)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_families_code ON families(code)",
+    # Fourth revision: symptoms/diagnosis captured from the consultation.
+    "ALTER TABLE prescriptions ADD COLUMN IF NOT EXISTS diagnosis TEXT",
 ]
 
 # A prescription's date is recoverable: its medication schedules were created
@@ -165,6 +172,26 @@ def migrate() -> None:
                 made += 1
         db.commit()
         print(f"  stock rows seeded: {made}")
+
+        # A family code is what the QR token is built from, so existing
+        # households need one before their tokens can be rewritten.
+        for family in db.scalars(select(Family).order_by(Family.family_id)).all():
+            if not family.code:
+                family.code = unique_code(db)
+                db.flush()
+                print(f"  family '{family.name}' -> {family.code}")
+        db.commit()
+
+        rebuilt = 0
+        for patient in db.scalars(select(Patient).order_by(Patient.patient_id)).all():
+            if patient.family is None or not patient.family.code:
+                continue
+            token = qr_token_for(patient.family.code, patient.patient_id)
+            if patient.qr_token != token:
+                patient.qr_token = token
+                rebuilt += 1
+        db.commit()
+        print(f"  QR tokens rebuilt: {rebuilt}")
 
         for statement, label in (
             (BACKFILL_PRESCRIPTION_DATES, "prescriptions.created_on"),

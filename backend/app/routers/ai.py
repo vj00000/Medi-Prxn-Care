@@ -8,12 +8,18 @@ from sqlalchemy.orm import Session
 from app.ai.chat import chat_with_draft
 from app.ai.client import AIBadResponse, AINotConfigured
 from app.ai.extract import extract_prescription_from_image
+from app.ai.parse_note import parse_note
+from app.ai.patient_assistant import answer_patient_question
 from app.ai.patient_chat import parse_checkup_request
 from app.database import get_db
 from app.models import Patient, PatientDoctorVisit, Prescription
 from app.schemas import (
     ChatRequest,
     ChatResponse,
+    ParseNoteRequest,
+    ParseNoteResponse,
+    PatientAssistantRequest,
+    PatientAssistantResponse,
     PatientChatRequest,
     PatientChatResponse,
 )
@@ -65,12 +71,29 @@ async def extract_prescription(file: UploadFile = File(...)):
     return {"draft": draft.model_dump()}
 
 
+@router.post("/parse-note", response_model=ParseNoteResponse)
+async def parse_note_endpoint(payload: ParseNoteRequest):
+    """Turn spoken or typed text into a structured medicine list."""
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Say or type what you are taking.")
+
+    try:
+        return await parse_note(text)
+    except Exception as exc:
+        raise _as_http_error(exc)
+
+
 @router.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest):
+async def chat(payload: ChatRequest, db: Session = Depends(get_db)):
     """Talk to the prescribing assistant; returns the updated draft."""
     try:
         draft, reply, actions = await chat_with_draft(
-            payload.draft, payload.message, payload.history
+            payload.draft,
+            payload.message,
+            payload.history,
+            db=db,
+            patient_id=payload.patient_id,
         )
     except HTTPException:
         raise
@@ -124,3 +147,24 @@ def patient_chat(payload: PatientChatRequest, db: Session = Depends(get_db)):
         next_checkup_date=target,
         prescription_id=rx.prescription_id,
     )
+
+
+@router.post("/patient-assistant", response_model=PatientAssistantResponse)
+async def patient_assistant(
+    payload: PatientAssistantRequest, db: Session = Depends(get_db)
+):
+    """Answer any question about the patient or their family from the record."""
+    patient = db.get(Patient, payload.patient_id)
+    if patient is None:
+        raise HTTPException(
+            status_code=404, detail=f"Patient {payload.patient_id} not found"
+        )
+
+    try:
+        reply = await answer_patient_question(
+            db, payload.patient_id, payload.message, payload.history
+        )
+    except Exception as exc:
+        raise _as_http_error(exc)
+
+    return PatientAssistantResponse(reply=reply)

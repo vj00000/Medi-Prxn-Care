@@ -2,7 +2,7 @@ import { ClipboardList, FlaskConical, Stethoscope } from 'lucide-react'
 import { useApp } from '../../store/AppStore'
 import SectionCard from '../../components/SectionCard'
 import Badge from '../../components/Badge'
-import { CURRENT_PATIENT_ID, buildTimeline } from '../patientData'
+import { buildTimeline } from '../patientData'
 
 const ICONS = {
   prescription: ClipboardList,
@@ -11,8 +11,8 @@ const ICONS = {
 }
 
 export default function Timeline() {
-  const { patients, prescriptions } = useApp()
-  const patient = patients.find((p) => p.patient_id === CURRENT_PATIENT_ID)
+  const { patients, prescriptions, patientId } = useApp()
+  const patient = patients.find((p) => p.patient_id === patientId)
   const events = buildTimeline(patient, prescriptions)
 
   return (

@@ -9,6 +9,11 @@ function initials(name) {
   return name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
 }
 
+function scheduleDays(schedule) {
+  if (!schedule.start_date || !schedule.end_date) return null
+  return Math.round((new Date(schedule.end_date) - new Date(schedule.start_date)) / 86400000)
+}
+
 export default function PatientDetail() {
   const { id } = useParams()
   const { getPatient, getPrescriptionsFor, loading } = useApp()
@@ -115,17 +120,42 @@ export default function PatientDetail() {
           {patient.schedules.length === 0 ? (
             <p className="text-sm text-slate-400">No active medications.</p>
           ) : (
-            <ul className="space-y-3">
-              {patient.schedules.map((schedule) => (
-                <li key={schedule.id} className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-slate-800">{schedule.medicine_name}</p>
-                    <p className="text-xs text-slate-500">{schedule.dosage}</p>
-                  </div>
-                  <Badge tone="neutral">{schedule.timing_slot}</Badge>
-                </li>
-              ))}
-            </ul>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[520px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-400">
+                    <th className="px-3 py-2 font-medium">Medicine</th>
+                    <th className="px-3 py-2 font-medium">Dosage</th>
+                    <th className="px-3 py-2 font-medium">Timing</th>
+                    <th className="px-3 py-2 font-medium">Days</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {patient.schedules.map((schedule) => (
+                    <tr key={schedule.id}>
+                      <td className="px-3 py-2 font-medium text-slate-800">
+                        {schedule.medicine_name}
+                      </td>
+                      <td className="px-3 py-2 text-slate-600">{schedule.dosage ?? '—'}</td>
+                      <td className="px-3 py-2 text-slate-600">{schedule.timing_slot ?? '—'}</td>
+                      <td className="px-3 py-2 text-slate-600">{scheduleDays(schedule) ?? '—'}</td>
+                      <td className="px-3 py-2">
+                        {schedule.is_expired ? (
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
+                            Expired
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                            Active
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </SectionCard>
       </div>
