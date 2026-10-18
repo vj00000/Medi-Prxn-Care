@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 function getSpeechRecognition() {
+  if (typeof window === 'undefined') return null
   const win = window
-  return win.SpeechRecognition || win.webkitSpeechRecognition || null
+  const Recognition =
+    win.SpeechRecognition || win.webkitSpeechRecognition || null
+  return Recognition ? new Recognition() : null
 }
 
 /**
@@ -70,9 +73,15 @@ export function useDictation(onResult) {
       setListening(false)
     }
 
-    recognition.start()
     recognitionRef.current = recognition
-    setListening(true)
+    try {
+      recognition.start()
+      setListening(true)
+    } catch (error) {
+      recognitionRef.current = null
+      setListening(false)
+      setNotice(`Could not start voice input: ${error.message}`)
+    }
   }, [stop])
 
   useEffect(() => () => stop(), [stop])

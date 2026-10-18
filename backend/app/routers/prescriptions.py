@@ -156,6 +156,65 @@ def _interaction_warnings(
     return warnings, note
 
 
+def _active_medicine_names(db: Session, patient_id: int) -> set[str]:
+    """Return normalized medicine names already active for a patient."""
+    names = db.scalars(
+        select(MedicationSchedule.medicine_name).where(
+            MedicationSchedule.patient_id == patient_id,
+            MedicationSchedule.is_expired.is_(False),
+        )
+    ).all()
+    return {name.strip().casefold() for name in names if name and name.strip()}
+
+
+def _add_medicine_line(
+    db: Session,
+    rx: Prescription,
+    patient_id: int,
+    line: MedicineLine,
+    active_names: set[str],
+) -> Medicine | None:
+    """Add one medicine link and schedule unless it is already active.
+
+    The prescription itself is still saved, but an existing active medicine
+    does not get another schedule or reminder.
+    """
+    medicine = _resolve_medicine(db, line)
+    if medicine is None:
+        return None
+
+    key = medicine.name.strip().casefold()
+    if key in active_names:
+        return medicine
+
+    db.add(
+        PrescriptionMedicine(
+            prescription_id=rx.prescription_id,
+            medicine_id=medicine.id,
+            medicine_dosage=line.dosage,
+            timings=line.timings,
+            is_active=True,
+        )
+    )
+    start = date.today()
+    db.add(
+        MedicationSchedule(
+            patient_id=patient_id,
+            prescription_id=rx.prescription_id,
+            medicine_name=medicine.name,
+            dosage=line.dosage,
+            timing_slot=normalize_slot(line.timing_slot),
+            start_date=start,
+            end_date=start + timedelta(days=line.duration_days)
+            if line.duration_days
+            else None,
+            is_expired=False,
+        )
+    )
+    active_names.add(key)
+    return medicine
+
+
 @router.post("", response_model=PrescriptionOut, status_code=201)
 def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_db)):
     """Persist a doctor-confirmed prescription (status starts as `review`)."""
@@ -211,6 +270,9 @@ def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_d
     ).all()
 
     added_names: list[str] = []
+    active_names = {
+        name.strip().casefold() for name in ongoing_names if name and name.strip()
+    }
 
     for line in payload.medicines:
         medicine = _resolve_medicine(db, line)
@@ -218,30 +280,7 @@ def create_prescription(payload: PrescriptionCreate, db: Session = Depends(get_d
             continue
         added_names.append(medicine.name)
 
-        db.add(
-            PrescriptionMedicine(
-                prescription_id=rx.prescription_id,
-                medicine_id=medicine.id,
-                medicine_dosage=line.dosage,
-                timings=line.timings,
-                is_active=True,
-            )
-        )
-
-        db.add(
-            MedicationSchedule(
-                patient_id=patient.patient_id,
-                prescription_id=rx.prescription_id,
-                medicine_name=medicine.name,
-                dosage=line.dosage,
-                timing_slot=normalize_slot(line.timing_slot),
-                start_date=start,
-                end_date=start + timedelta(days=line.duration_days)
-                if line.duration_days
-                else None,
-                is_expired=False,
-            )
-        )
+        _add_medicine_line(db, rx, patient.patient_id, line, active_names)
 
         haystack = f"{medicine.name} {medicine.brand or ''}".lower()
         for term in allergies:
@@ -275,34 +314,9 @@ def _add_medicine_lines(
     db: Session, rx: Prescription, patient_id: int, lines: list[MedicineLine]
 ) -> None:
     """Attach medicine links and reminder schedules to a prescription."""
-    start = date.today()
+    active_names = _active_medicine_names(db, patient_id)
     for line in lines:
-        medicine = _resolve_medicine(db, line)
-        if medicine is None:
-            continue
-        db.add(
-            PrescriptionMedicine(
-                prescription_id=rx.prescription_id,
-                medicine_id=medicine.id,
-                medicine_dosage=line.dosage,
-                timings=line.timings,
-                is_active=True,
-            )
-        )
-        db.add(
-            MedicationSchedule(
-                patient_id=patient_id,
-                prescription_id=rx.prescription_id,
-                medicine_name=medicine.name,
-                dosage=line.dosage,
-                timing_slot=normalize_slot(line.timing_slot),
-                start_date=start,
-                end_date=start + timedelta(days=line.duration_days)
-                if line.duration_days
-                else None,
-                is_expired=False,
-            )
-        )
+        _add_medicine_line(db, rx, patient_id, line, active_names)
 
 
 @router.post("/self", response_model=PrescriptionOut, status_code=201)

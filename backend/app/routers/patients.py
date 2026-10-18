@@ -65,9 +65,17 @@ def _to_out(
     doses = taken_on(db, patient.patient_id, today) if db is not None else {}
 
     schedules = []
+    seen_schedule_keys: set[tuple[str, str]] = set()
     for row in sorted(patient.medication_schedules, key=lambda row: row.id):
         if not is_owner and row.prescription is not None and row.prescription.is_private:
             continue
+        schedule_key = (
+            row.medicine_name.strip().casefold(),
+            (normalize_slot(row.timing_slot) or "").casefold(),
+        )
+        if schedule_key in seen_schedule_keys:
+            continue
+        seen_schedule_keys.add(schedule_key)
         log = doses.get(row.id)
         stock = (
             stock_for(db, patient.patient_id, row.medicine_name)

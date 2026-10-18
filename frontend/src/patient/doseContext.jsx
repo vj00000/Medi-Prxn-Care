@@ -41,16 +41,24 @@ export function DoseProvider({ children }) {
   const { patients, prescriptions, refreshFamily, patientId } = useApp()
   const selected = patients.find((p) => p.patient_id === patientId)
   const schedules = selected?.schedules ?? []
+  const today = todayIso()
+  const [optimisticTaken, setOptimisticTaken] = useState({})
 
   /** schedule id -> taken_at, built from the server's own record. */
   const taken = useMemo(
-    () =>
-      Object.fromEntries(
+    () => ({
+      ...Object.fromEntries(
         schedules
           .filter((schedule) => schedule.taken_today)
           .map((schedule) => [schedule.id, schedule.taken_at ?? true]),
       ),
-    [schedules],
+      ...Object.fromEntries(
+        Object.entries(optimisticTaken)
+          .filter(([, doseDate]) => doseDate === today)
+          .map(([id]) => [id, true]),
+      ),
+    }),
+    [optimisticTaken, schedules, today],
   )
 
   const [ringing, setRinging] = useState(null)
@@ -83,11 +91,19 @@ export function DoseProvider({ children }) {
   const markTaken = useCallback(
     async (id) => {
       setRinging((current) => (current?.id === id ? null : current))
+      setOptimisticTaken((prev) => ({ ...prev, [id]: today }))
       setBusy((prev) => ({ ...prev, [id]: true }))
       try {
         await markDoseTaken(patientId, id)
         // Refetch so stock and taken_today come from the server, not a guess.
         await refreshFamily()
+      } catch (error) {
+        setOptimisticTaken((prev) => {
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        throw error
       } finally {
         setBusy((prev) => {
           const next = { ...prev }
@@ -96,11 +112,16 @@ export function DoseProvider({ children }) {
         })
       }
     },
-    [refreshFamily, patientId],
+    [refreshFamily, patientId, today],
   )
 
   const untake = useCallback(
     async (id) => {
+      setOptimisticTaken((prev) => {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
       setBusy((prev) => ({ ...prev, [id]: true }))
       try {
         await untakeDose(patientId, id)
