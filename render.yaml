@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: smart-rx-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////tmp/smart_rx.db
