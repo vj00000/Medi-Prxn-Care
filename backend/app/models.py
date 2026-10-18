@@ -7,17 +7,19 @@ explicit first argument to ``mapped_column``.
 """
 
 import enum
-from datetime import date
+from datetime import date, datetime, time
 from typing import List, Optional
 
 from sqlalchemy import (
     Boolean,
     Date,
+    DateTime,
     Enum,
     ForeignKey,
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -43,10 +45,52 @@ class Doctor(Base):
     specialization: Mapped[Optional[str]] = mapped_column(String(100))
     contact_number: Mapped[Optional[str]] = mapped_column(String(20))
     gender: Mapped[Optional[str]] = mapped_column(String(20))
+    # Onboarding / sign-in.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
+    # Consulting-slot length used when generating bookable times.
+    slot_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
 
     visits: Mapped[List["PatientDoctorVisit"]] = relationship(
         back_populates="doctor", cascade="all, delete-orphan"
     )
+    availability: Mapped[List["DoctorAvailability"]] = relationship(
+        back_populates="doctor", cascade="all, delete-orphan"
+    )
+
+
+class DoctorAvailability(Base):
+    """A doctor's weekly consulting window. Several may share a weekday."""
+
+    __tablename__ = "doctor_availability"
+
+    availability_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    doctor_id: Mapped[int] = mapped_column(
+        ForeignKey("doctors.doctor_id", ondelete="CASCADE"), nullable=False
+    )
+    # 0 = Monday ... 6 = Sunday, matching date.weekday().
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+
+    doctor: Mapped["Doctor"] = relationship(back_populates="availability")
+
+
+# --------------------------------------------------------------------------- #
+# families — households whose members share the patient portal
+# --------------------------------------------------------------------------- #
+class Family(Base):
+    __tablename__ = "families"
+
+    family_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Public identifier used in patient QR tokens. The integer family_id stays
+    # the key; this is the value that is shown on screen and typed by hand.
+    code: Mapped[Optional[str]] = mapped_column(String(5), unique=True, index=True)
+
+    members: Mapped[List["Patient"]] = relationship(back_populates="family")
 
 
 # --------------------------------------------------------------------------- #
@@ -61,6 +105,17 @@ class Patient(Base):
     gender: Mapped[Optional[str]] = mapped_column(String(20))
     allergies: Mapped[Optional[str]] = mapped_column(Text)
     qr_token: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(20))
+    # Onboarding / sign-in.
+    email: Mapped[Optional[str]] = mapped_column(String(255))
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255))
+    family_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("families.family_id", ondelete="SET NULL")
+    )
+    # Role within the family: self / father / mother / other.
+    relation: Mapped[Optional[str]] = mapped_column(String(20))
+
+    family: Mapped[Optional["Family"]] = relationship(back_populates="members")
 
     disease_links: Mapped[List["PatientDisease"]] = relationship(
         back_populates="patient", cascade="all, delete-orphan"
@@ -161,6 +216,8 @@ class PatientDoctorVisit(Base):
     prescription_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("prescriptions.prescription_id", ondelete="SET NULL"), unique=True
     )
+    # When the appointment happened; a patient's "last visit" is the newest one.
+    visit_date: Mapped[Optional[date]] = mapped_column(Date)
 
     patient: Mapped["Patient"] = relationship(back_populates="visits")
     doctor: Mapped["Doctor"] = relationship(back_populates="visits")
@@ -178,7 +235,17 @@ class Prescription(Base):
     prescription_id: Mapped[int] = mapped_column(
         Integer, primary_key=True, autoincrement=True
     )
+    # When the prescription was written — the table's only timestamp.
+    created_on: Mapped[Optional[date]] = mapped_column(Date)
+    # Whether family members other than the patient can see this prescription.
+    is_private: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Follow-up appointment the patient should attend.
+    next_checkup_date: Mapped[Optional[date]] = mapped_column(Date)
+    # Wall-clock slot on that date. Null means the patient picked a day only.
+    next_checkup_time: Mapped[Optional[time]] = mapped_column(Time)
     transcript: Mapped[Optional[str]] = mapped_column(Text)
+    # Symptoms, working diagnosis, or other clinical detail for this visit.
+    diagnosis: Mapped[Optional[str]] = mapped_column(Text)
     case_paper_url: Mapped[Optional[str]] = mapped_column(String(500))
     status: Mapped[PrescriptionStatus] = mapped_column(
         Enum(
@@ -190,6 +257,13 @@ class Prescription(Base):
         ),
         default=PrescriptionStatus.review,
         nullable=False,
+    )
+    # Who authored this prescription: "doctor" or "patient" (self-reported).
+    created_by: Mapped[str] = mapped_column(String(20), default="doctor", nullable=False)
+    # Direct link to the patient. Doctor prescriptions set this too; the visit
+    # still carries the doctor and appointment details.
+    patient_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("patients.patient_id", ondelete="CASCADE"), nullable=True
     )
     lab_test_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("lab_tests.test_id", ondelete="SET NULL")
@@ -266,6 +340,68 @@ class MedicationSchedule(Base):
     patient: Mapped["Patient"] = relationship(back_populates="medication_schedules")
     prescription: Mapped[Optional["Prescription"]] = relationship(
         back_populates="medication_schedules"
+    )
+    doses: Mapped[List["DoseLog"]] = relationship(
+        back_populates="schedule", cascade="all, delete-orphan"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 10b. dose_logs — one row per dose actually swallowed
+# --------------------------------------------------------------------------- #
+class DoseLog(Base):
+    """A recorded dose.
+
+    The unique ``(schedule_id, dose_date)`` pair is the guarantee behind "mark
+    taken only once for that time": a second tap cannot record the same dose,
+    so stock is never decremented twice. Because the key includes the date, a
+    new dose becomes recordable again tomorrow — which is also what lets the
+    next reminder fire.
+    """
+
+    __tablename__ = "dose_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    schedule_id: Mapped[int] = mapped_column(
+        ForeignKey("medication_schedules.id", ondelete="CASCADE"), nullable=False
+    )
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.patient_id", ondelete="CASCADE"), nullable=False
+    )
+    dose_date: Mapped[date] = mapped_column(Date, nullable=False)
+    taken_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("schedule_id", "dose_date", name="uq_dose_log_per_slot"),
+    )
+
+    schedule: Mapped["MedicationSchedule"] = relationship(back_populates="doses")
+
+
+# --------------------------------------------------------------------------- #
+# 10c. medicine_stock — units left, per patient and medicine
+# --------------------------------------------------------------------------- #
+class MedicineStock(Base):
+    """How much of one medicine a patient has left.
+
+    Stock is keyed on patient and medicine name rather than on a schedule:
+    morning and night schedules for the same drug draw down the same pack, so
+    counting per slot would double the apparent supply.
+    """
+
+    __tablename__ = "medicine_stock"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    patient_id: Mapped[int] = mapped_column(
+        ForeignKey("patients.patient_id", ondelete="CASCADE"), nullable=False
+    )
+    medicine_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    units_remaining: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Warn at or below this many units.
+    low_stock_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+
+    __table_args__ = (
+        UniqueConstraint("patient_id", "medicine_name", name="uq_stock_per_medicine"),
     )
 
 

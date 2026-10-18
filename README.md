@@ -1,4 +1,4 @@
-# SmartPrxn.ai.builder
+# Medi-Prxn-Care
 
 Smart Clinical Prescription & Patient Safety Ecosystem — backend.
 
